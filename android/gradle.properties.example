@@ -1,0 +1,18 @@
+org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+org.gradle.parallel=true
+org.gradle.caching=true
+android.useAndroidX=true
+android.nonTransitiveRClass=true
+kotlin.code.style=official
+
+MAPS_API_KEY=YOUR_GOOGLE_MAPS_API_KEY_HERE
+BACKEND_BASE_URL=https://your-server.example.com/
+BACKEND_API_KEY=change-me-to-match-backend-.env
+
+# Release signing. Generate with:
+#   keytool -genkeypair -v -keystore keystore/release.keystore -alias yourapp \
+#     -keyalg RSA -keysize 2048 -validity 10000
+RELEASE_STORE_FILE=keystore/release.keystore
+RELEASE_STORE_PASSWORD=
+RELEASE_KEY_ALIAS=
+RELEASE_KEY_PASSWORD=
