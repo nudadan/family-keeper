@@ -19,6 +19,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -43,10 +49,6 @@ import com.noesolution.gtracker.admin.GTrackerDeviceAdminReceiver
 fun SettingsScreen(
     modifier: Modifier = Modifier,
     vm: MainViewModel,
-    onBack: () -> Unit,
-    onOpenTracker: () -> Unit,
-    onOpenViewer: () -> Unit,
-    onOpenEmergency: () -> Unit,
 ) {
     val settings by vm.settings.collectAsState()
 
@@ -79,163 +81,162 @@ fun SettingsScreen(
         audioMsg = if (granted) "" else "Izin mikrofon ditolak — audio darurat tidak bisa aktif."
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Top,
-    ) {
-        Text("Settings")
-        Spacer(Modifier.height(16.dp))
+    Column(modifier = modifier.fillMaxSize()) {
+        ScreenTopBar(title = "Setting")
 
-        // Modes moved here from the old home screen.
-        Text("Modes", style = MaterialTheme.typography.titleSmall)
-        Spacer(Modifier.height(8.dp))
-        Button(onClick = onOpenTracker, modifier = Modifier.fillMaxWidth()) {
-            Text("Tracker (send my location)")
-        }
-        Spacer(Modifier.height(8.dp))
-        Button(onClick = onOpenViewer, modifier = Modifier.fillMaxWidth()) {
-            Text("Viewer (trails on map)")
-        }
-        Spacer(Modifier.height(8.dp))
-        Button(onClick = onOpenEmergency, modifier = Modifier.fillMaxWidth()) {
-            Text("Emergency audio (darurat)")
-        }
-        Spacer(Modifier.height(20.dp))
-
-        Text("Configuration", style = MaterialTheme.typography.titleSmall)
-        Spacer(Modifier.height(8.dp))
-
-        OutlinedTextField(
-            value = label,
-            onValueChange = { label = it; saved = false },
-            label = { Text("Device name (shown on the map)") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(12.dp))
-
-        OutlinedTextField(
-            value = group,
-            onValueChange = { group = it; saved = false },
-            label = { Text("Group code (same code = same group)") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(12.dp))
-
-        OutlinedTextField(
-            value = interval,
-            onValueChange = { interval = it.filter { c -> c.isDigit() }; saved = false },
-            label = { Text("Interval (minutes)") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Device ID: ${settings?.deviceId ?: "…"}",
-        )
-        Spacer(Modifier.height(24.dp))
-
-        // --- Emergency audio consent ---
-        Text("Audio darurat", style = MaterialTheme.typography.titleSmall)
-        Spacer(Modifier.height(4.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(
-                text = "Izinkan anggota grup meminta audio darurat dari perangkat ini",
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.weight(1f),
-            )
-            Switch(
-                checked = settings?.allowAudio == true,
-                onCheckedChange = { want ->
-                    if (want) {
-                        val granted = ContextCompat.checkSelfPermission(
-                            context, Manifest.permission.RECORD_AUDIO,
-                        ) == PackageManager.PERMISSION_GRANTED
-                        if (granted) {
-                            vm.setAllowAudio(true)
-                            audioMsg = ""
-                        } else {
-                            recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        }
-                    } else {
-                        vm.setAllowAudio(false)
-                        audioMsg = ""
-                    }
-                },
-            )
-        }
-        Text(
-            text = "Saat direkam, HP akan berbunyi + bergetar + menampilkan notifikasi. Tidak ada perekaman diam-diam.",
-            style = MaterialTheme.typography.bodySmall,
-        )
-        if (audioMsg.isNotBlank()) {
-            Text(text = audioMsg, style = MaterialTheme.typography.bodySmall)
-        }
-        Spacer(Modifier.height(24.dp))
-
-        // --- Uninstall protection ---
-        Text("Proteksi", style = MaterialTheme.typography.titleSmall)
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = if (adminActive) {
-                "Proteksi uninstall AKTIF. Untuk menghapus aplikasi, nonaktifkan dulu di sini."
-            } else {
-                "Cegah aplikasi terhapus tanpa sengaja dengan mengaktifkan Device Admin."
-            },
-            style = MaterialTheme.typography.bodySmall,
-        )
-        Spacer(Modifier.height(8.dp))
-        if (adminActive) {
-            OutlinedButton(
-                onClick = {
-                    dpm.removeActiveAdmin(adminComponent)
-                    adminActive = false
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Nonaktifkan proteksi uninstall")
+            // --- Profil ---
+            SectionCard {
+                SectionHeading("Profil perangkat", icon = Icons.Filled.Person)
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = label,
+                    onValueChange = { label = it; saved = false },
+                    label = { Text("Nama device (tampil di peta)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Device ID: ${settings?.deviceId ?: "…"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-        } else {
+
+            // --- Grup & interval ---
+            SectionCard {
+                SectionHeading("Grup & interval", icon = Icons.Filled.Group)
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = group,
+                    onValueChange = { group = it; saved = false },
+                    label = { Text("Group code") },
+                    supportingText = { Text("Perangkat dengan kode sama saling terlihat") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = interval,
+                    onValueChange = { interval = it.filter { c -> c.isDigit() }; saved = false },
+                    label = { Text("Interval pengiriman (menit)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            // --- Emergency audio consent ---
+            SectionCard {
+                SectionHeading("Audio darurat", icon = Icons.Filled.Mic)
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Izinkan anggota grup meminta audio darurat dari perangkat ini",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = settings?.allowAudio == true,
+                        onCheckedChange = { want ->
+                            if (want) {
+                                val granted = ContextCompat.checkSelfPermission(
+                                    context, Manifest.permission.RECORD_AUDIO,
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (granted) {
+                                    vm.setAllowAudio(true)
+                                    audioMsg = ""
+                                } else {
+                                    recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            } else {
+                                vm.setAllowAudio(false)
+                                audioMsg = ""
+                            }
+                        },
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Saat direkam, HP akan berbunyi + bergetar + menampilkan notifikasi. Tidak ada perekaman diam-diam.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (audioMsg.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = audioMsg,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+
+            // --- Uninstall protection ---
+            SectionCard {
+                SectionHeading("Proteksi aplikasi", icon = Icons.Filled.Shield)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = if (adminActive) {
+                        "Proteksi uninstall AKTIF. Untuk menghapus aplikasi, nonaktifkan dulu di sini."
+                    } else {
+                        "Cegah aplikasi terhapus tanpa sengaja dari perangkat ini."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                if (adminActive) {
+                    OutlinedButton(
+                        onClick = {
+                            dpm.removeActiveAdmin(adminComponent)
+                            adminActive = false
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Nonaktifkan proteksi uninstall")
+                    }
+                } else {
+                    Button(
+                        onClick = {
+                            val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                                putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
+                                putExtra(
+                                    DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                                    "Mencegah aplikasi Gardenia-1 dihapus dari perangkat tanpa sengaja.",
+                                )
+                            }
+                            adminLauncher.launch(intent)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Aktifkan proteksi uninstall")
+                    }
+                }
+            }
+
             Button(
                 onClick = {
-                    val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
-                        putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
-                        putExtra(
-                            DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                            "Mencegah aplikasi Gardenia-1 dihapus dari perangkat tanpa sengaja.",
-                        )
-                    }
-                    adminLauncher.launch(intent)
+                    val minutes = interval.toIntOrNull()?.coerceAtLeast(1) ?: 5
+                    vm.saveSettings(label, group, minutes)
+                    saved = true
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Aktifkan proteksi uninstall")
+                Text(if (saved) "Tersimpan ✓" else "Simpan")
             }
-        }
-        Spacer(Modifier.height(24.dp))
-
-        Button(
-            onClick = {
-                val minutes = interval.toIntOrNull()?.coerceAtLeast(1) ?: 5
-                vm.saveSettings(label, group, minutes)
-                saved = true
-            },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(if (saved) "Saved ✓" else "Save")
-        }
-        Spacer(Modifier.height(12.dp))
-        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
-            Text("Back")
+            Spacer(Modifier.height(8.dp))
         }
     }
 }

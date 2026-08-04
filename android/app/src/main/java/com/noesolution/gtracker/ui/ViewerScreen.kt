@@ -1,16 +1,17 @@
 package com.noesolution.gtracker.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -18,12 +19,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
@@ -43,10 +40,9 @@ private const val TRACK_HOURS = 12.0
 fun ViewerScreen(
     modifier: Modifier = Modifier,
     vm: MainViewModel,
-    onBack: () -> Unit,
 ) {
     var tracks by remember { mutableStateOf<List<Track>>(emptyList()) }
-    var status by remember { mutableStateOf("Loading…") }
+    var status by remember { mutableStateOf("Memuat…") }
 
     val cameraPositionState = rememberCameraPositionState {
         // Default view: Indonesia.
@@ -54,7 +50,7 @@ fun ViewerScreen(
     }
 
     fun refresh() {
-        status = "Loading…"
+        status = "Memuat…"
         vm.loadTracks(TRACK_HOURS) { result ->
             result
                 .onSuccess { list ->
@@ -64,8 +60,8 @@ fun ViewerScreen(
 
                     val allPoints = nonEmpty.flatMap { it.points }
                     status = when {
-                        nonEmpty.isEmpty() -> "No positions in the last 12h"
-                        else -> "${nonEmpty.size} device(s), ${allPoints.size} points (last 12h)"
+                        nonEmpty.isEmpty() -> "Tidak ada posisi dalam 12 jam terakhir"
+                        else -> "${nonEmpty.size} device · ${allPoints.size} titik (12 jam terakhir)"
                     }
 
                     // Fit the camera to everything we have.
@@ -92,6 +88,12 @@ fun ViewerScreen(
     LaunchedEffect(Unit) { refresh() }
 
     Column(modifier = modifier.fillMaxSize()) {
+        ScreenTopBar(title = "Jejak (Viewer)") {
+            IconButton(onClick = { refresh() }) {
+                Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
+            }
+        }
+
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             GoogleMap(
                 modifier = Modifier.fillMaxSize(),
@@ -118,25 +120,26 @@ fun ViewerScreen(
                             keys = arrayOf(name, last.lat, last.lng),
                             state = MarkerState(position = pos),
                             title = name,
-                            snippet = "${track.points.size} points · last 12h",
+                            snippet = "${track.points.size} titik · 12 jam terakhir",
                         ) {
                             DeviceLabel(name = name, color = color)
                         }
                     }
                 }
             }
-        }
 
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(status)
-            Button(onClick = { refresh() }, modifier = Modifier.padding(top = 8.dp)) {
-                Text("Refresh")
-            }
-            OutlinedButton(onClick = onBack, modifier = Modifier.padding(top = 8.dp)) {
-                Text("Back")
+            ElevatedCard(
+                modifier = Modifier
+                    .align(androidx.compose.ui.Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 3.dp),
+            ) {
+                Text(
+                    text = status,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(16.dp),
+                )
             }
         }
     }

@@ -18,6 +18,16 @@
         android:name="android.hardware.location.gps"
         android:required="false" />
 
+    <!-- Needed on Android 11+ to launch the Google Maps app / share sheet
+         for navigation and location sharing (package visibility). -->
+    <queries>
+        <package android:name="com.google.android.apps.maps" />
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="text/plain" />
+        </intent>
+    </queries>
+
     <application
         android:name=".App"
         android:allowBackup="true"
