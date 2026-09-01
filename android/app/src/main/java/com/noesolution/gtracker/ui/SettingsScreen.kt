@@ -48,6 +48,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -119,10 +120,23 @@ fun SettingsScreen(
     val tracking = settings?.trackingEnabled == true
     val groupSet = settings?.groupCode?.isNotBlank() == true
 
-    var label by remember(settings) { mutableStateOf(settings?.label ?: "") }
-    var group by remember(settings) { mutableStateOf(settings?.groupCode ?: "") }
-    var interval by remember(settings) {
-        mutableStateOf((settings?.intervalMinutes ?: 5).toString())
+    // Editable copies of the persisted fields. These must load from `settings`
+    // exactly ONCE (when it first becomes available) and never again — settings
+    // re-emits on ANY change (e.g. toggling audio consent, start/stop tracking),
+    // and re-seeding on every emission would wipe out text the user is mid-typing
+    // here but hasn't pressed Simpan for yet.
+    var label by remember { mutableStateOf("") }
+    var group by remember { mutableStateOf("") }
+    var interval by remember { mutableStateOf("5") }
+    var loadedInitial by remember { mutableStateOf(false) }
+    LaunchedEffect(settings) {
+        val s = settings
+        if (s != null && !loadedInitial) {
+            label = s.label
+            group = s.groupCode
+            interval = s.intervalMinutes.toString()
+            loadedInitial = true
+        }
     }
     var saved by remember { mutableStateOf(false) }
     var testStatus by remember { mutableStateOf("") }
