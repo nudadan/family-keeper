@@ -11,6 +11,7 @@ const router = express.Router();
 
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const MAPS_API_KEY = process.env.MAPS_API_KEY || '';
 
 function timingSafeEqual(a, b) {
   const ab = Buffer.from(a);
@@ -98,6 +99,25 @@ const listAudioStmt = db.prepare(`
   LIMIT 100
 `);
 
+// Latest known position for every device in a given group (group_id is the
+// raw hash as stored/shown in the Groups table — no need to re-hash a code
+// here since the admin already operates on real group_id values).
+const latestPositionsForGroupStmt = db.prepare(`
+  SELECT p.device_id, p.lat, p.lng, p.accuracy, p.speed, p.recorded_at,
+    (SELECT label FROM devices d WHERE d.device_id = p.device_id) AS label,
+    (SELECT type FROM devices d WHERE d.device_id = p.device_id) AS type
+  FROM positions p
+  JOIN (
+    SELECT device_id, MAX(recorded_at) AS max_time
+    FROM positions
+    WHERE COALESCE(group_id, 'default') = ?
+    GROUP BY device_id
+  ) m ON p.device_id = m.device_id AND p.recorded_at = m.max_time
+  WHERE COALESCE(p.group_id, 'default') = ?
+  GROUP BY p.device_id
+  ORDER BY p.device_id
+`);
+
 // --- Small inline icon set (stroke-based, currentColor) — no external assets. ---
 const icon = {
   groups: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
@@ -105,6 +125,8 @@ const icon = {
   audio: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>',
   logout: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>',
   check: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+  map: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>',
+  refresh: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
 };
 
 function typeBadge(type) {
@@ -277,6 +299,20 @@ const page = (groups, devices, audio, base) => {
   }
   .search-input:focus { outline: 2px solid var(--primary-light); border-color: var(--primary); }
 
+  /* --- Map --- */
+  .map-toolbar { display: flex; gap: 8px; align-items: center; }
+  .map-toolbar select { flex: 1; }
+  .map-toolbar .btn { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  #map-canvas { width: 100%; height: 420px; background: var(--grey-bg); }
+  .map-legend { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--border); }
+  .map-legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+  .map-legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .map-infowindow { font-family: inherit; font-size: 13px; min-width: 180px; }
+  .map-infowindow h4 { margin: 0 0 4px; font-size: 14px; }
+  .map-infowindow p { margin: 2px 0; color: #444; }
+  .map-infowindow a { display: inline-block; margin-top: 6px; font-size: 12.5px; font-weight: 600; }
+  @media (max-width: 640px) { .map-toolbar { flex-wrap: wrap; } .map-toolbar select { min-width: 100%; } }
+
   /* --- Toast --- */
   .toast {
     position: fixed; left: 50%; bottom: 22px; transform: translate(-50%, 12px);
@@ -327,6 +363,7 @@ const page = (groups, devices, audio, base) => {
       </div>
     </div>
     <nav class="topnav">
+      <a href="#map">${icon.map}<span class="label">Peta</span></a>
       <a href="#groups">${icon.groups}<span class="label">Grup</span></a>
       <a href="#devices">${icon.devices}<span class="label">Perangkat</span></a>
       <a href="#audio">${icon.audio}<span class="label">Audio Darurat</span></a>
@@ -344,6 +381,29 @@ const page = (groups, devices, audio, base) => {
     <div class="stat-card"><div class="stat-value" id="stat-consent">${consentCount}</div><div class="stat-label">Izin audio aktif</div></div>
     <div class="stat-card"><div class="stat-value" id="stat-pending">${pendingCount}</div><div class="stat-label">Permintaan pending</div></div>
   </div>
+
+  <section id="map" class="panel">
+    <div class="panel-head">
+      <span class="icon-badge">${icon.map}</span>
+      <h2>Peta Posisi</h2>
+      <span class="count" id="map-status">-</span>
+    </div>
+    <div class="toolbar map-toolbar">
+      <select id="map-group-select" class="search-input">
+        ${groups.map((g) => `<option value="${esc(g.group_id)}">${g.name ? esc(g.name) : esc(g.group_id)} (${g.device_count})</option>`).join('')}
+      </select>
+      <button type="button" id="map-refresh-btn" class="btn">${icon.refresh} Refresh</button>
+    </div>
+    ${MAPS_API_KEY ? `
+    <div id="map-canvas"></div>
+    <div id="map-legend" class="map-legend"></div>
+    ` : `
+    <div class="empty-state">
+      Google Maps API key belum diatur di server (env <code>MAPS_API_KEY</code>).<br>
+      Set nilainya lalu restart service untuk mengaktifkan peta.
+    </div>
+    `}
+  </section>
 
   <section id="groups" class="panel">
     <div class="panel-head">
@@ -604,6 +664,174 @@ const page = (groups, devices, audio, base) => {
       document.getElementById('devices-no-results').style.display = visible === 0 ? '' : 'none';
     });
   }
+
+  // --- Map (positions for the selected group) ---
+  var mapCanvas = document.getElementById('map-canvas');
+  if (mapCanvas) {
+    var gMap = null;
+    var gMarkers = {};
+    var gInfoWindow = null;
+    var groupSelect = document.getElementById('map-group-select');
+    var refreshBtn = document.getElementById('map-refresh-btn');
+    var statusEl = document.getElementById('map-status');
+    var legendEl = document.getElementById('map-legend');
+
+    // Pick the group with the most devices as the initial selection.
+    (function pickDefaultGroup() {
+      var options = Array.prototype.slice.call(groupSelect.options);
+      if (options.length === 0) return;
+      options.sort(function (a, b) {
+        return Number(b.textContent.match(/\((\d+)\)$/)?.[1] || 0) -
+               Number(a.textContent.match(/\((\d+)\)$/)?.[1] || 0);
+      });
+      groupSelect.value = options[0].value;
+    })();
+
+    function colorForDevice(id) {
+      var hash = 0;
+      for (var i = 0; i < id.length; i++) { hash = (hash * 31 + id.charCodeAt(i)) | 0; }
+      var hue = ((hash % 360) + 360) % 360;
+      return 'hsl(' + hue + ', 70%, 45%)';
+    }
+
+    function fmtWIB(ms) {
+      return new Date(ms).toLocaleString('id-ID', {
+        timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+      }) + ' WIB';
+    }
+
+    function relTime(ms) {
+      var sec = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+      if (sec < 60) return 'baru saja';
+      if (sec < 3600) return Math.floor(sec / 60) + ' menit lalu';
+      if (sec < 86400) return Math.floor(sec / 3600) + ' jam lalu';
+      return Math.floor(sec / 86400) + ' hari lalu';
+    }
+
+    window.initGardeniaMap = function () {
+      gMap = new google.maps.Map(mapCanvas, {
+        center: { lat: -2.5, lng: 118 },
+        zoom: 4,
+      });
+      gInfoWindow = new google.maps.InfoWindow();
+      loadPositions();
+      setInterval(loadPositions, 20000);
+    };
+
+    function clearMarkers() {
+      Object.keys(gMarkers).forEach(function (id) { gMarkers[id].setMap(null); });
+      gMarkers = {};
+    }
+
+    function loadPositions() {
+      if (!groupSelect.value) {
+        statusEl.textContent = 'Belum ada grup';
+        return;
+      }
+      statusEl.textContent = 'Memuat…';
+      fetch('api/positions?group=' + encodeURIComponent(groupSelect.value))
+        .then(function (res) {
+          if (!res.ok) throw new Error('request failed');
+          return res.json();
+        })
+        .then(function (positions) {
+          clearMarkers();
+          legendEl.innerHTML = '';
+
+          if (positions.length === 0) {
+            statusEl.textContent = 'Tidak ada posisi untuk grup ini';
+            return;
+          }
+
+          var bounds = new google.maps.LatLngBounds();
+          positions.forEach(function (p) {
+            var name = p.label || p.deviceId;
+            var color = colorForDevice(p.deviceId);
+            var pos = { lat: p.lat, lng: p.lng };
+            bounds.extend(pos);
+
+            var marker = new google.maps.Marker({
+              position: pos,
+              map: gMap,
+              title: name,
+              label: {
+                text: name.slice(0, 1).toUpperCase(),
+                color: '#fff',
+                fontSize: '11px',
+                fontWeight: '700',
+              },
+              icon: {
+                path: google.maps.SymbolPath.CIRCLE,
+                scale: 11,
+                fillColor: color,
+                fillOpacity: 1,
+                strokeColor: '#fff',
+                strokeWeight: 2,
+              },
+            });
+
+            marker.addListener('click', function () {
+              var navUrl = 'https://www.google.com/maps/dir/?api=1&destination=' + p.lat + ',' + p.lng;
+              var html =
+                '<div class="map-infowindow">' +
+                  '<h4>' + escHtml(name) + (p.type === 'admin' ? ' (Admin)' : '') + '</h4>' +
+                  '<p>Update terakhir: ' + fmtWIB(p.recordedAt) + '</p>' +
+                  '<p>' + relTime(p.recordedAt) + '</p>' +
+                  '<p>Akurasi: ' + (p.accuracy ? '±' + Math.round(p.accuracy) + ' m' : '-') + '</p>' +
+                  '<p>Koordinat: ' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5) + '</p>' +
+                  '<a href="' + navUrl + '" target="_blank" rel="noopener">Buka di Google Maps →</a>' +
+                '</div>';
+              gInfoWindow.setContent(html);
+              gInfoWindow.open(gMap, marker);
+            });
+
+            gMarkers[p.deviceId] = marker;
+
+            var legendItem = document.createElement('div');
+            legendItem.className = 'map-legend-item';
+            legendItem.innerHTML =
+              '<span class="map-legend-dot" style="background:' + color + '"></span>' +
+              escHtml(name) + ' · ' + relTime(p.recordedAt);
+            legendItem.style.cursor = 'pointer';
+            legendItem.addEventListener('click', function () {
+              gMap.panTo(pos);
+              gMap.setZoom(15);
+              google.maps.event.trigger(marker, 'click');
+            });
+            legendEl.appendChild(legendItem);
+          });
+
+          if (positions.length === 1) {
+            gMap.setCenter(bounds.getCenter());
+            gMap.setZoom(15);
+          } else {
+            gMap.fitBounds(bounds, 60);
+          }
+
+          statusEl.textContent = positions.length + ' perangkat · diperbarui ' +
+            new Date().toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour12: false });
+        })
+        .catch(function () {
+          statusEl.textContent = 'Gagal memuat posisi';
+          toast('Gagal memuat data peta. Coba lagi.', 'error');
+        });
+    }
+
+    function escHtml(s) {
+      var div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    groupSelect.addEventListener('change', loadPositions);
+    refreshBtn.addEventListener('click', loadPositions);
+
+    var gmapsScript = document.createElement('script');
+    gmapsScript.src = 'https://maps.googleapis.com/maps/api/js?key=${MAPS_API_KEY}&callback=initGardeniaMap';
+    gmapsScript.async = true;
+    document.head.appendChild(gmapsScript);
+  }
 })();
 </script>
 
@@ -622,6 +850,23 @@ router.get('/', (req, res) => {
 function home(req) {
   return req.baseUrl || '/admin';
 }
+
+// GET /admin/api/positions?group=<group_id> -> latest position per device (JSON)
+// Used by the map on the dashboard to plot devices for the selected group.
+router.get('/api/positions', (req, res) => {
+  const groupId = (req.query.group || 'default').toString();
+  const rows = latestPositionsForGroupStmt.all(groupId, groupId);
+  res.json(rows.map((r) => ({
+    deviceId: r.device_id,
+    label: r.label,
+    type: r.type,
+    lat: r.lat,
+    lng: r.lng,
+    accuracy: r.accuracy,
+    speed: r.speed,
+    recordedAt: r.recorded_at,
+  })));
+});
 
 const setTypeStmt = db.prepare('UPDATE devices SET type = ? WHERE device_id = ?');
 router.post('/device/:id/type', (req, res) => {
