@@ -28,6 +28,16 @@ function requesterIsAdmin(req) {
   return !!row && row.type === 'admin';
 }
 
+// A group can opt in (from the admin site) to let members see admin devices
+// too — i.e. disable the member/admin visibility split for that group.
+const groupFlatVisibilityStmt = db.prepare(
+  'SELECT show_admins_to_members FROM groups WHERE group_id = ?'
+);
+function groupIsFlat(groupId) {
+  const row = groupFlatVisibilityStmt.get(groupId);
+  return !!row && row.show_admins_to_members === 1;
+}
+
 // --- Prepared statements. @g = group id, @admins = 1 if requester is admin. ---
 const insertStmt = db.prepare(`
   INSERT INTO positions (device_id, group_id, label, lat, lng, accuracy, speed, recorded_at, received_at)
@@ -51,7 +61,7 @@ const upsertDeviceStmt = db.prepare(`
 `);
 
 // "AND visible" predicate used by all read queries.
-const VISIBLE = "(@admins = 1 OR COALESCE(dev.type, 'member') <> 'admin')";
+const VISIBLE = "(@admins = 1 OR @flat = 1 OR COALESCE(dev.type, 'member') <> 'admin')";
 
 const latestPerDeviceStmt = db.prepare(`
   SELECT p.*
@@ -179,12 +189,13 @@ router.post('/', (req, res) => {
 router.get('/latest', (req, res) => {
   const g = groupIdFromReq(req);
   const admins = requesterIsAdmin(req) ? 1 : 0;
+  const flat = groupIsFlat(g) ? 1 : 0;
   const deviceId = req.query.deviceId;
   if (deviceId) {
-    const row = latestForDeviceStmt.get({ d: String(deviceId), g, admins });
+    const row = latestForDeviceStmt.get({ d: String(deviceId), g, admins, flat });
     return res.json(row || null);
   }
-  res.json(latestPerDeviceStmt.all({ g, admins }));
+  res.json(latestPerDeviceStmt.all({ g, admins, flat }));
 });
 
 // GET /api/positions?deviceId=x&limit=100 -> history (newest first), scoped
@@ -197,19 +208,23 @@ router.get('/', (req, res) => {
   if (!Number.isFinite(limit) || limit <= 0) limit = 100;
   if (limit > 1000) limit = 1000;
 
+  const g = groupIdFromReq(req);
   res.json(historyStmt.all({
     d: String(deviceId),
-    g: groupIdFromReq(req),
+    g,
     admins: requesterIsAdmin(req) ? 1 : 0,
+    flat: groupIsFlat(g) ? 1 : 0,
     lim: limit,
   }));
 });
 
 // GET /api/positions/devices -> known visible devices in the group
 router.get('/devices', (req, res) => {
+  const g = groupIdFromReq(req);
   res.json(devicesStmt.all({
-    g: groupIdFromReq(req),
+    g,
     admins: requesterIsAdmin(req) ? 1 : 0,
+    flat: groupIsFlat(g) ? 1 : 0,
   }));
 });
 
@@ -225,10 +240,11 @@ router.get('/tracks', (req, res) => {
 
   const g = groupIdFromReq(req);
   const admins = requesterIsAdmin(req) ? 1 : 0;
+  const flat = groupIsFlat(g) ? 1 : 0;
   const deviceId = req.query.deviceId;
   const rows = deviceId
-    ? tracksForDeviceStmt.all({ d: String(deviceId), since, g, admins })
-    : tracksStmt.all({ since, g, admins });
+    ? tracksForDeviceStmt.all({ d: String(deviceId), since, g, admins, flat })
+    : tracksStmt.all({ since, g, admins, flat });
 
   const byDevice = new Map();
   for (const r of rows) {

@@ -5,6 +5,7 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const fs = require('fs');
 const db = require('../db');
 
 const router = express.Router();
@@ -77,6 +78,7 @@ const listGroupsStmt = db.prepare(`
   SELECT
     g.group_id,
     g.name,
+    g.show_admins_to_members,
     (SELECT COUNT(*) FROM devices d WHERE COALESCE(d.group_id, 'default') = g.group_id) AS device_count
   FROM groups g
   ORDER BY (g.name IS NULL), g.name, g.group_id
@@ -127,6 +129,9 @@ const icon = {
   check: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
   map: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>',
   refresh: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
+  save: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>',
+  swap: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
 };
 
 function typeBadge(type) {
@@ -197,7 +202,7 @@ const page = (groups, devices, audio, base) => {
     color: #fff; box-shadow: var(--shadow);
   }
   .topbar-inner {
-    max-width: 1100px; margin: 0 auto; padding: 0 20px;
+    width: 95%; max-width: 1800px; margin: 0 auto; padding: 0;
     display: flex; align-items: center; gap: 14px; height: 60px;
   }
   .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; white-space: nowrap; }
@@ -214,7 +219,16 @@ const page = (groups, devices, audio, base) => {
   nav.topnav a:hover { background: rgba(255,255,255,.14); color: #fff; }
   .signed-in { font-size: 12px; opacity: .85; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 
-  main { max-width: 1100px; margin: 0 auto; padding: 20px; }
+  main { width: 95%; max-width: 1800px; margin: 0 auto; padding: 20px 0; }
+
+  /* --- Two-column layout: tables left (40%), map right (60%) --- */
+  .layout { display: grid; grid-template-columns: 2fr 3fr; gap: 20px; align-items: start; }
+  .col-left { min-width: 0; }
+  .col-right { min-width: 0; position: sticky; top: 76px; }
+  @media (max-width: 900px) {
+    .layout { display: block; }
+    .col-right { position: static; }
+  }
 
   /* --- Stat cards --- */
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 28px; }
@@ -284,7 +298,23 @@ const page = (groups, devices, audio, base) => {
   .btn-primary { background: var(--primary); border-color: var(--primary); color: #fff; }
   .btn-danger { background: var(--surface); border-color: var(--red-bg); color: var(--red-fg); }
   .btn-danger:hover { background: var(--red-bg); }
+  .icon-btn {
+    width: 30px; height: 30px; padding: 0; display: inline-flex;
+    align-items: center; justify-content: center; flex-shrink: 0;
+  }
   .rename-form { display: flex; gap: 6px; }
+
+  /* --- Compact toggle switch (per-group flat visibility) --- */
+  .switch { position: relative; display: inline-block; width: 34px; height: 18px; cursor: pointer; flex-shrink: 0; }
+  .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+  .switch-track { position: absolute; inset: 0; background: var(--grey-bg); border-radius: 999px; transition: background .15s; }
+  .switch-track::before {
+    content: ''; position: absolute; height: 14px; width: 14px; left: 2px; top: 2px; background: #fff;
+    border-radius: 50%; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.25);
+  }
+  .switch input:checked + .switch-track { background: var(--primary); }
+  .switch input:checked + .switch-track::before { transform: translateX(16px); }
+
   input[type=text] {
     padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); font-size: 13px;
     background: #fbfbfc; min-width: 120px;
@@ -303,7 +333,8 @@ const page = (groups, devices, audio, base) => {
   .map-toolbar { display: flex; gap: 8px; align-items: center; }
   .map-toolbar select { flex: 1; }
   .map-toolbar .btn { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
-  #map-canvas { width: 100%; height: 420px; background: var(--grey-bg); }
+  #map-canvas { width: 100%; height: 560px; background: var(--grey-bg); }
+  @media (max-width: 900px) { #map-canvas { height: 420px; } }
   .map-legend { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--border); }
   .map-legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
   .map-legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
@@ -347,7 +378,7 @@ const page = (groups, devices, audio, base) => {
     .brand-sub { display: none; }
     nav.topnav a span.label { display: none; }
     .signed-in span.label { display: none; }
-    main { padding: 14px; }
+    main { padding: 14px 0; }
     .panel-head { padding: 13px 14px; }
     th, td { padding: 9px 10px; }
   }
@@ -382,28 +413,8 @@ const page = (groups, devices, audio, base) => {
     <div class="stat-card"><div class="stat-value" id="stat-pending">${pendingCount}</div><div class="stat-label">Permintaan pending</div></div>
   </div>
 
-  <section id="map" class="panel">
-    <div class="panel-head">
-      <span class="icon-badge">${icon.map}</span>
-      <h2>Peta Posisi</h2>
-      <span class="count" id="map-status">-</span>
-    </div>
-    <div class="toolbar map-toolbar">
-      <select id="map-group-select" class="search-input">
-        ${groups.map((g) => `<option value="${esc(g.group_id)}">${g.name ? esc(g.name) : esc(g.group_id)} (${g.device_count})</option>`).join('')}
-      </select>
-      <button type="button" id="map-refresh-btn" class="btn">${icon.refresh} Refresh</button>
-    </div>
-    ${MAPS_API_KEY ? `
-    <div id="map-canvas"></div>
-    <div id="map-legend" class="map-legend"></div>
-    ` : `
-    <div class="empty-state">
-      Google Maps API key belum diatur di server (env <code>MAPS_API_KEY</code>).<br>
-      Set nilainya lalu restart service untuk mengaktifkan peta.
-    </div>
-    `}
-  </section>
+  <div class="layout">
+  <div class="col-left">
 
   <section id="groups" class="panel">
     <div class="panel-head">
@@ -413,19 +424,35 @@ const page = (groups, devices, audio, base) => {
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Nama</th><th>Group ID (hash)</th><th>Perangkat</th><th>Ganti nama</th></tr></thead>
-        <tbody>
-        ${groups.length === 0 ? emptyRow(4, 'Belum ada grup.') : groups.map((g) => `<tr>
+        <thead><tr><th>Nama</th><th>Perangkat</th><th>Anggota lihat admin</th><th>Ganti nama</th><th>Aksi</th></tr></thead>
+        <tbody id="groups-tbody">
+        ${groups.length === 0 ? emptyRow(5, 'Belum ada grup.') : groups.map((g) => {
+          const groupName = g.name || g.group_id;
+          return `<tr data-group-row data-group-name="${esc(groupName)}" data-device-count="${g.device_count}">
           <td class="cell-primary">${g.name ? esc(g.name) : '<span class="muted">(belum diberi nama)</span>'}</td>
-          <td class="wrap"><span class="mono">${esc(g.group_id)}</span></td>
           <td>${g.device_count}</td>
+          <td>
+            <form class="inline js-group-flat" method="post" action="group/${encodeURIComponent(g.group_id)}/visibility">
+              <label class="switch" title="Anggota bisa melihat posisi &amp; minta audio dari admin">
+                <input type="checkbox" name="flat" value="1" ${g.show_admins_to_members ? 'checked' : ''}>
+                <span class="switch-track"></span>
+              </label>
+            </form>
+          </td>
           <td>
             <form class="rename-form js-rename" method="post" action="group/${encodeURIComponent(g.group_id)}/name">
               <input type="text" name="name" value="${esc(g.name)}" placeholder="Nama grup">
-              <button type="submit" class="btn-primary">Simpan</button>
+              <button type="submit" class="icon-btn btn-primary" title="Simpan nama" aria-label="Simpan nama">${icon.save}</button>
             </form>
           </td>
-        </tr>`).join('')}
+          <td>
+            ${g.group_id === 'default' ? '' : `
+            <form class="inline js-group-delete" method="post" action="group/${encodeURIComponent(g.group_id)}/delete">
+              <button type="submit" class="icon-btn btn-danger" title="Hapus grup" aria-label="Hapus grup">${icon.trash}</button>
+            </form>`}
+          </td>
+        </tr>`;
+        }).join('')}
         </tbody>
       </table>
     </div>
@@ -443,15 +470,14 @@ const page = (groups, devices, audio, base) => {
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Nama</th><th>Device ID</th><th>Grup</th><th>Tipe</th><th>Audio</th><th>Terakhir aktif</th><th>Aksi</th></tr></thead>
+        <thead><tr><th>Nama</th><th>Device ID / Grup</th><th>Tipe</th><th>Audio</th><th>Terakhir aktif</th><th>Aksi</th></tr></thead>
         <tbody id="devices-tbody">
-        ${devices.length === 0 ? emptyRow(7, 'Belum ada perangkat terdaftar.') : devices.map((d) => {
+        ${devices.length === 0 ? emptyRow(6, 'Belum ada perangkat terdaftar.') : devices.map((d) => {
           const name = d.label || d.device_id;
           const searchKey = esc(`${d.label || ''} ${d.device_id} ${d.group_name || ''}`.toLowerCase());
           return `<tr data-device-row data-search="${searchKey}" data-name="${esc(name)}">
           <td class="cell-primary">${d.label ? esc(d.label) : '<span class="muted">(tanpa nama)</span>'}</td>
-          <td><span class="mono">${esc(d.device_id)}</span></td>
-          <td>${d.group_name ? esc(d.group_name) : `<span class="mono">${esc(d.group_id || 'default')}</span>`}</td>
+          <td><span class="mono">${esc(d.device_id)}</span><div class="sub">${d.group_name ? esc(d.group_name) : esc(d.group_id || 'default')}</div></td>
           <td class="type-cell">${typeBadge(d.type)}</td>
           <td class="consent-cell">${consentBadge(d.allow_audio)}</td>
           <td>${fmtTime(d.last_seen)}<div class="sub">${timeAgo(d.last_seen)}</div></td>
@@ -459,10 +485,10 @@ const page = (groups, devices, audio, base) => {
             <div class="actions">
               <form class="inline js-type" method="post" action="device/${encodeURIComponent(d.device_id)}/type">
                 <input type="hidden" name="type" value="${d.type === 'admin' ? 'member' : 'admin'}">
-                <button type="submit">Jadikan ${d.type === 'admin' ? 'Member' : 'Admin'}</button>
+                <button type="submit" class="icon-btn" title="Jadikan ${d.type === 'admin' ? 'Member' : 'Admin'}" aria-label="Jadikan ${d.type === 'admin' ? 'Member' : 'Admin'}">${icon.swap}</button>
               </form>
               <form class="inline js-delete" method="post" action="device/${encodeURIComponent(d.device_id)}/delete">
-                <button type="submit" class="btn-danger">Hapus</button>
+                <button type="submit" class="icon-btn btn-danger" title="Hapus perangkat" aria-label="Hapus perangkat">${icon.trash}</button>
               </form>
             </div>
           </td>
@@ -470,7 +496,7 @@ const page = (groups, devices, audio, base) => {
         }).join('')}
         </tbody>
         <tbody id="devices-no-results" style="display:none">
-          <tr><td colspan="7" class="empty-state">Tidak ada perangkat yang cocok dengan pencarian.</td></tr>
+          <tr><td colspan="6" class="empty-state">Tidak ada perangkat yang cocok dengan pencarian.</td></tr>
         </tbody>
       </table>
     </div>
@@ -496,6 +522,35 @@ const page = (groups, devices, audio, base) => {
       </table>
     </div>
   </section>
+
+  </div>
+  <div class="col-right">
+
+  <section id="map" class="panel">
+    <div class="panel-head">
+      <span class="icon-badge">${icon.map}</span>
+      <h2>Peta Posisi</h2>
+      <span class="count" id="map-status">-</span>
+    </div>
+    <div class="toolbar map-toolbar">
+      <select id="map-group-select" class="search-input">
+        ${groups.map((g) => `<option value="${esc(g.group_id)}">${g.name ? esc(g.name) : esc(g.group_id)} (${g.device_count})</option>`).join('')}
+      </select>
+      <button type="button" id="map-refresh-btn" class="btn">${icon.refresh} Refresh</button>
+    </div>
+    ${MAPS_API_KEY ? `
+    <div id="map-canvas"></div>
+    <div id="map-legend" class="map-legend"></div>
+    ` : `
+    <div class="empty-state">
+      Google Maps API key belum diatur di server (env <code>MAPS_API_KEY</code>).<br>
+      Set nilainya lalu restart service untuk mengaktifkan peta.
+    </div>
+    `}
+  </section>
+
+  </div>
+  </div>
 
   <footer>Gardenia-1 · GTracker backend admin</footer>
 </main>
@@ -560,7 +615,7 @@ const page = (groups, devices, audio, base) => {
     var tbody = document.getElementById('devices-tbody');
     if (deviceRows().length === 0 && !tbody.querySelector('.empty-state')) {
       var tr = document.createElement('tr');
-      tr.innerHTML = '<td colspan="7" class="empty-state">Belum ada perangkat terdaftar.</td>';
+      tr.innerHTML = '<td colspan="6" class="empty-state">Belum ada perangkat terdaftar.</td>';
       tbody.appendChild(tr);
       document.getElementById('devices-no-results').style.display = 'none';
     }
@@ -618,7 +673,10 @@ const page = (groups, devices, audio, base) => {
           ? '<span class="badge badge-admin">Admin</span>'
           : '<span class="badge badge-member">Member</span>';
         input.value = newType === 'admin' ? 'member' : 'admin';
-        form.querySelector('button').textContent = 'Jadikan ' + (newType === 'admin' ? 'Member' : 'Admin');
+        var label = 'Jadikan ' + (newType === 'admin' ? 'Member' : 'Admin');
+        var btn = form.querySelector('button');
+        btn.title = label;
+        btn.setAttribute('aria-label', label);
         updateDeviceCounts();
         toast('Tipe perangkat diperbarui.', 'success');
       }).catch(function () {
@@ -644,6 +702,50 @@ const page = (groups, devices, audio, base) => {
         toast('Nama grup disimpan.', 'success');
       }).catch(function () {
         toast('Gagal menyimpan nama grup. Coba lagi.', 'error');
+      });
+    });
+  });
+
+  // --- Per-group "members see admin too" toggle (auto-submits on change) ---
+  document.querySelectorAll('form.js-group-flat').forEach(function (form) {
+    var checkbox = form.querySelector('input[type=checkbox]');
+    checkbox.addEventListener('change', function () {
+      var wasChecked = checkbox.checked;
+      submitForm(form).then(function (res) {
+        if (!res.ok) throw new Error('request failed');
+        toast(
+          wasChecked
+            ? 'Member kini bisa melihat posisi & minta audio dari admin.'
+            : 'Dikembalikan: member tidak bisa melihat admin.',
+          'success'
+        );
+      }).catch(function () {
+        checkbox.checked = !wasChecked; // revert on failure
+        toast('Gagal menyimpan pengaturan. Coba lagi.', 'error');
+      });
+    });
+  });
+
+  // --- Delete a group (cascades to its devices, positions, and audio log) ---
+  document.querySelectorAll('form.js-group-delete').forEach(function (form) {
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var row = form.closest('tr');
+      var name = row.getAttribute('data-group-name') || 'grup ini';
+      var deviceCount = parseInt(row.getAttribute('data-device-count'), 10) || 0;
+      var message = deviceCount > 0
+        ? 'Hapus grup "' + name + '"? Ini akan menghapus ' + deviceCount +
+          ' perangkat beserta seluruh riwayat posisi dan audio darurat di dalamnya. Tindakan ini tidak bisa dibatalkan.'
+        : 'Hapus grup "' + name + '"? Tindakan ini tidak bisa dibatalkan.';
+      confirmModal(message, 'Hapus grup').then(function (ok) {
+        if (!ok) return;
+        submitForm(form).then(function (res) {
+          if (!res.ok) throw new Error('request failed');
+          toast('Grup "' + name + '" dihapus.', 'success');
+          setTimeout(function () { window.location.reload(); }, 700);
+        }).catch(function () {
+          toast('Gagal menghapus grup. Coba lagi.', 'error');
+        });
       });
     });
   });
@@ -890,6 +992,46 @@ const setGroupNameStmt = db.prepare('UPDATE groups SET name = ? WHERE group_id =
 router.post('/group/:gid/name', (req, res) => {
   const name = (req.body.name || '').trim() || null;
   setGroupNameStmt.run(name, req.params.gid);
+  res.redirect(home(req));
+});
+
+const setGroupFlatStmt = db.prepare('UPDATE groups SET show_admins_to_members = ? WHERE group_id = ?');
+router.post('/group/:gid/visibility', (req, res) => {
+  const flat = req.body.flat === '1' ? 1 : 0;
+  setGroupFlatStmt.run(flat, req.params.gid);
+  res.redirect(home(req));
+});
+
+// Deleting a group cascades to every device in it, their positions, and their
+// emergency-audio history — this is destructive and confirmed client-side.
+const groupAudioClipsStmt = db.prepare(
+  "SELECT clip_path FROM audio_requests WHERE group_id = ? AND clip_path IS NOT NULL"
+);
+const delGroupAudioStmt = db.prepare('DELETE FROM audio_requests WHERE group_id = ?');
+const delGroupPositionsStmt = db.prepare("DELETE FROM positions WHERE COALESCE(group_id, 'default') = ?");
+const delGroupDevicesStmt = db.prepare("DELETE FROM devices WHERE COALESCE(group_id, 'default') = ?");
+const delGroupStmt = db.prepare('DELETE FROM groups WHERE group_id = ?');
+
+router.post('/group/:gid/delete', (req, res) => {
+  const gid = req.params.gid;
+  if (gid === 'default') {
+    return res.status(400).send('Grup default tidak bisa dihapus.');
+  }
+  const clips = groupAudioClipsStmt.all(gid);
+  const tx = db.transaction((id) => {
+    delGroupAudioStmt.run(id);
+    delGroupPositionsStmt.run(id);
+    delGroupDevicesStmt.run(id);
+    delGroupStmt.run(id);
+  });
+  tx(gid);
+  for (const c of clips) {
+    try {
+      if (c.clip_path && fs.existsSync(c.clip_path)) fs.unlinkSync(c.clip_path);
+    } catch (_) {
+      // best-effort cleanup; the DB rows are already gone either way
+    }
+  }
   res.redirect(home(req));
 });
 

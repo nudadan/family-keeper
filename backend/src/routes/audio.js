@@ -32,6 +32,16 @@ function deviceGroup(dev) {
   return dev && dev.group_id ? dev.group_id : 'default';
 }
 
+// Same per-group opt-in used for position visibility: when set, members can
+// also request emergency audio from admin devices (not just see their position).
+const groupFlatVisibilityStmt = db.prepare(
+  'SELECT show_admins_to_members FROM groups WHERE group_id = ?'
+);
+function groupIsFlat(groupId) {
+  const row = groupFlatVisibilityStmt.get(groupId);
+  return !!row && row.show_admins_to_members === 1;
+}
+
 // --- statements ---
 const insertReqStmt = db.prepare(`
   INSERT INTO audio_requests
@@ -79,9 +89,10 @@ router.post('/request', (req, res) => {
   if (deviceGroup(target) !== g) {
     return res.status(403).json({ error: 'target is not in your group' });
   }
-  // Members cannot reach admin devices (same visibility rule as positions).
+  // Members cannot reach admin devices, unless the group has opted in to
+  // flat visibility (same rule as positions).
   const requesterIsAdmin = requester && requester.type === 'admin';
-  if (!requesterIsAdmin && target.type === 'admin') {
+  if (!requesterIsAdmin && target.type === 'admin' && !groupIsFlat(g)) {
     return res.status(403).json({ error: 'not allowed' });
   }
   // Consent is mandatory.

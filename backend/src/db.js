@@ -69,6 +69,13 @@ if (!deviceCols.includes('allow_audio')) {
   db.exec('ALTER TABLE devices ADD COLUMN allow_audio INTEGER NOT NULL DEFAULT 0');
 }
 
+// Per-group opt-in: when set, members can see admin devices' positions too
+// (normally hidden from members). Managed only from the admin site.
+const groupCols = db.prepare('PRAGMA table_info(groups)').all().map((c) => c.name);
+if (!groupCols.includes('show_admins_to_members')) {
+  db.exec('ALTER TABLE groups ADD COLUMN show_admins_to_members INTEGER NOT NULL DEFAULT 0');
+}
+
 // Emergency audio requests (on-demand clips).
 db.exec(`
   CREATE TABLE IF NOT EXISTS audio_requests (
