@@ -79,6 +79,7 @@ const listGroupsStmt = db.prepare(`
     g.group_id,
     g.name,
     g.show_admins_to_members,
+    g.whatsapp_group_id,
     (SELECT COUNT(*) FROM devices d WHERE COALESCE(d.group_id, 'default') = g.group_id) AS device_count
   FROM groups g
   ORDER BY (g.name IS NULL), g.name, g.group_id
@@ -98,6 +99,13 @@ const listAudioStmt = db.prepare(`
     r.target_device_id
   FROM audio_requests r
   ORDER BY r.created_at DESC
+  LIMIT 100
+`);
+
+const listPickupStmt = db.prepare(`
+  SELECT id, requester_label, note, status, error, created_at
+  FROM pickup_requests
+  ORDER BY created_at DESC
   LIMIT 100
 `);
 
@@ -132,6 +140,7 @@ const icon = {
   save: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>',
   swap: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>',
   trash: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
+  car: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17H3v-6l2-5h11l4 5v6h-2"/><circle cx="7.5" cy="17.5" r="2.5"/><circle cx="16.5" cy="17.5" r="2.5"/><path d="M5 12h14"/></svg>',
 };
 
 function typeBadge(type) {
@@ -150,6 +159,8 @@ function statusBadge(status) {
     done: ['badge-yes', 'Selesai'],
     pending: ['badge-pending', 'Menunggu'],
     rejected: ['badge-no', 'Ditolak'],
+    sent: ['badge-yes', 'Terkirim'],
+    failed: ['badge-no', 'Gagal'],
   };
   const [cls, label] = map[status] || ['badge-muted', status];
   return `<span class="badge ${cls}">${esc(label)}</span>`;
@@ -159,7 +170,7 @@ function emptyRow(colspan, text) {
   return `<tr><td colspan="${colspan}" class="empty-state">${esc(text)}</td></tr>`;
 }
 
-const page = (groups, devices, audio, base) => {
+const page = (groups, devices, audio, pickup, base) => {
   const adminCount = devices.filter((d) => d.type === 'admin').length;
   const memberCount = devices.length - adminCount;
   const consentCount = devices.filter((d) => d.allow_audio).length;
@@ -398,6 +409,7 @@ const page = (groups, devices, audio, base) => {
       <a href="#groups">${icon.groups}<span class="label">Grup</span></a>
       <a href="#devices">${icon.devices}<span class="label">Perangkat</span></a>
       <a href="#audio">${icon.audio}<span class="label">Audio Darurat</span></a>
+      <a href="#pickup">${icon.car}<span class="label">Jemput</span></a>
     </nav>
     <div class="signed-in">${icon.logout}<span class="label">${esc(ADMIN_USER)}</span></div>
   </div>
@@ -424,9 +436,9 @@ const page = (groups, devices, audio, base) => {
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Nama</th><th>Perangkat</th><th>Anggota lihat admin</th><th>Ganti nama</th><th>Aksi</th></tr></thead>
+        <thead><tr><th>Nama</th><th>Perangkat</th><th>Tampilkan Admin</th><th>WhatsApp Grup (Jemput)</th><th>Ganti nama</th><th>Aksi</th></tr></thead>
         <tbody id="groups-tbody">
-        ${groups.length === 0 ? emptyRow(5, 'Belum ada grup.') : groups.map((g) => {
+        ${groups.length === 0 ? emptyRow(6, 'Belum ada grup.') : groups.map((g) => {
           const groupName = g.name || g.group_id;
           return `<tr data-group-row data-group-name="${esc(groupName)}" data-device-count="${g.device_count}">
           <td class="cell-primary">${g.name ? esc(g.name) : '<span class="muted">(belum diberi nama)</span>'}</td>
@@ -437,6 +449,12 @@ const page = (groups, devices, audio, base) => {
                 <input type="checkbox" name="flat" value="1" ${g.show_admins_to_members ? 'checked' : ''}>
                 <span class="switch-track"></span>
               </label>
+            </form>
+          </td>
+          <td>
+            <form class="rename-form js-group-whatsapp" method="post" action="group/${encodeURIComponent(g.group_id)}/whatsapp">
+              <input type="text" name="whatsapp_group_id" value="${esc(g.whatsapp_group_id)}" placeholder="628xxx-xxx@g.us">
+              <button type="submit" class="icon-btn btn-primary" title="Simpan WhatsApp Grup ID" aria-label="Simpan WhatsApp Grup ID">${icon.save}</button>
             </form>
           </td>
           <td>
@@ -517,6 +535,27 @@ const page = (groups, devices, audio, base) => {
           <td class="cell-primary">${esc(a.requester_label)}</td>
           <td>${a.target_label ? esc(a.target_label) : `<span class="mono">${esc(a.target_device_id)}</span>`}</td>
           <td>${statusBadge(a.status)}</td>
+        </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="pickup" class="panel">
+    <div class="panel-head">
+      <span class="icon-badge">${icon.car}</span>
+      <h2>Log Jemput</h2>
+      <span class="count" id="pickup-count">${pickup.length} permintaan</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Waktu</th><th>Peminta</th><th>Catatan</th><th>Status</th></tr></thead>
+        <tbody>
+        ${pickup.length === 0 ? emptyRow(4, 'Belum ada permintaan jemput.') : pickup.map((p) => `<tr>
+          <td>${fmtTime(p.created_at)}</td>
+          <td class="cell-primary">${esc(p.requester_label)}</td>
+          <td>${p.note ? esc(p.note) : '<span class="muted">-</span>'}</td>
+          <td>${statusBadge(p.status)}${p.error ? `<div class="sub">${esc(p.error)}</div>` : ''}</td>
         </tr>`).join('')}
         </tbody>
       </table>
@@ -702,6 +741,19 @@ const page = (groups, devices, audio, base) => {
         toast('Nama grup disimpan.', 'success');
       }).catch(function () {
         toast('Gagal menyimpan nama grup. Coba lagi.', 'error');
+      });
+    });
+  });
+
+  // --- Save per-group WhatsApp group ID (used by the "Jemput" feature) ---
+  document.querySelectorAll('form.js-group-whatsapp').forEach(function (form) {
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      submitForm(form).then(function (res) {
+        if (!res.ok) throw new Error('request failed');
+        toast('WhatsApp Grup ID disimpan.', 'success');
+      }).catch(function () {
+        toast('Gagal menyimpan WhatsApp Grup ID. Coba lagi.', 'error');
       });
     });
   });
@@ -945,6 +997,7 @@ router.get('/', (req, res) => {
     listGroupsStmt.all(),
     listDevicesStmt.all(),
     listAudioStmt.all(),
+    listPickupStmt.all(),
     req.baseUrl || '/admin',
   ));
 });
@@ -995,6 +1048,13 @@ router.post('/group/:gid/name', (req, res) => {
   res.redirect(home(req));
 });
 
+const setGroupWhatsappStmt = db.prepare('UPDATE groups SET whatsapp_group_id = ? WHERE group_id = ?');
+router.post('/group/:gid/whatsapp', (req, res) => {
+  const wag = (req.body.whatsapp_group_id || '').trim() || null;
+  setGroupWhatsappStmt.run(wag, req.params.gid);
+  res.redirect(home(req));
+});
+
 const setGroupFlatStmt = db.prepare('UPDATE groups SET show_admins_to_members = ? WHERE group_id = ?');
 router.post('/group/:gid/visibility', (req, res) => {
   const flat = req.body.flat === '1' ? 1 : 0;
@@ -1008,6 +1068,7 @@ const groupAudioClipsStmt = db.prepare(
   "SELECT clip_path FROM audio_requests WHERE group_id = ? AND clip_path IS NOT NULL"
 );
 const delGroupAudioStmt = db.prepare('DELETE FROM audio_requests WHERE group_id = ?');
+const delGroupPickupStmt = db.prepare('DELETE FROM pickup_requests WHERE group_id = ?');
 const delGroupPositionsStmt = db.prepare("DELETE FROM positions WHERE COALESCE(group_id, 'default') = ?");
 const delGroupDevicesStmt = db.prepare("DELETE FROM devices WHERE COALESCE(group_id, 'default') = ?");
 const delGroupStmt = db.prepare('DELETE FROM groups WHERE group_id = ?');
@@ -1020,6 +1081,7 @@ router.post('/group/:gid/delete', (req, res) => {
   const clips = groupAudioClipsStmt.all(gid);
   const tx = db.transaction((id) => {
     delGroupAudioStmt.run(id);
+    delGroupPickupStmt.run(id);
     delGroupPositionsStmt.run(id);
     delGroupDevicesStmt.run(id);
     delGroupStmt.run(id);

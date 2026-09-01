@@ -75,6 +75,29 @@ const groupCols = db.prepare('PRAGMA table_info(groups)').all().map((c) => c.nam
 if (!groupCols.includes('show_admins_to_members')) {
   db.exec('ALTER TABLE groups ADD COLUMN show_admins_to_members INTEGER NOT NULL DEFAULT 0');
 }
+// Per-group WhatsApp group ID ("628xxx-xxx@g.us") pickup requests are sent
+// to. NULL = pickup feature disabled for that group until an admin sets it.
+if (!groupCols.includes('whatsapp_group_id')) {
+  db.exec('ALTER TABLE groups ADD COLUMN whatsapp_group_id TEXT');
+}
+
+// "Jemput" (pickup request) log — one row per request sent to WhatsApp.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS pickup_requests (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id            TEXT,
+    requester_device_id TEXT,
+    requester_label     TEXT,
+    note                TEXT,
+    lat                 REAL,
+    lng                 REAL,
+    status              TEXT NOT NULL DEFAULT 'sent',
+    error               TEXT,
+    created_at          INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_pickup_group_time
+    ON pickup_requests (group_id, created_at DESC);
+`);
 
 // Emergency audio requests (on-demand clips).
 db.exec(`

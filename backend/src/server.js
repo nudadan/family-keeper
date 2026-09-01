@@ -7,6 +7,7 @@ const cors = require('cors');
 
 const positionsRouter = require('./routes/positions');
 const audioRouter = require('./routes/audio');
+const pickupRouter = require('./routes/pickup');
 const adminRouter = require('./routes/admin');
 
 const app = express();
@@ -37,6 +38,7 @@ app.get('/health', (req, res) => {
 
 app.use('/api/positions', requireApiKey, positionsRouter);
 app.use('/api/audio', requireApiKey, audioRouter);
+app.use('/api/pickup', requireApiKey, pickupRouter);
 
 // Admin site (its own Basic-auth, not the API key).
 app.use('/admin', adminRouter);

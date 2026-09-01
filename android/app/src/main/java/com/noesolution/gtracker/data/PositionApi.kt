@@ -24,9 +24,6 @@ interface PositionApi {
         @Query("limit") limit: Int = 100,
     ): List<Position>
 
-    @GET("api/positions/tracks")
-    suspend fun tracks(@Query("hours") hours: Double = 12.0): TracksResponse
-
     // --- Emergency audio ---
 
     @GET("api/audio/pending")
@@ -51,4 +48,9 @@ interface PositionApi {
 
     @GET("api/audio/log")
     suspend fun audioLog(): List<AudioLogEntry>
+
+    // --- Pickup request ("Jemput") ---
+
+    @POST("api/pickup/request")
+    suspend fun requestPickup(@Body body: PickupRequestBody)
 }

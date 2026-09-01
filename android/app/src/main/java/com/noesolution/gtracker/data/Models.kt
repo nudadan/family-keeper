@@ -27,6 +27,9 @@ data class AudioRequestBody(val targetDeviceId: String)
 /** Response of POST /api/audio/request */
 data class AudioRequestResponse(val requestId: String)
 
+/** Body for POST /api/pickup/request */
+data class PickupRequestBody(val note: String?)
+
 /** One row of the emergency-audio transparency log. */
 data class AudioLogEntry(
     val id: String,
@@ -34,28 +37,6 @@ data class AudioLogEntry(
     @Json(name = "created_at") val createdAt: Long,
     @Json(name = "target_label") val targetLabel: String?,
     @Json(name = "requester_label") val requesterLabel: String?,
-)
-
-/** One point in a device's track. */
-data class TrackPoint(
-    val lat: Double,
-    val lng: Double,
-    val accuracy: Double?,
-    val speed: Double?,
-    val recordedAt: Long,
-)
-
-/** A single device's track (points are chronological, oldest first). */
-data class Track(
-    val deviceId: String,
-    val label: String?,
-    val points: List<TrackPoint>,
-)
-
-/** Response of GET /api/positions/tracks */
-data class TracksResponse(
-    val since: Long,
-    val tracks: List<Track>,
 )
 
 /** A position row as returned by the backend. */

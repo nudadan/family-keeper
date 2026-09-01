@@ -24,9 +24,8 @@ import com.noesolution.gtracker.ui.AppDestination
 import com.noesolution.gtracker.ui.EmergencyAudioScreen
 import com.noesolution.gtracker.ui.HomeScreen
 import com.noesolution.gtracker.ui.MainViewModel
+import com.noesolution.gtracker.ui.PickupScreen
 import com.noesolution.gtracker.ui.SettingsScreen
-import com.noesolution.gtracker.ui.TrackerScreen
-import com.noesolution.gtracker.ui.ViewerScreen
 import com.noesolution.gtracker.ui.theme.GardeniaTheme
 
 class MainActivity : ComponentActivity() {
@@ -60,8 +59,7 @@ class MainActivity : ComponentActivity() {
                     Box(modifier = Modifier.fillMaxSize().padding(padding)) {
                         when (destination) {
                             AppDestination.Home -> HomeScreen(vm = vm)
-                            AppDestination.Tracker -> TrackerScreen(vm = vm)
-                            AppDestination.Viewer -> ViewerScreen(vm = vm)
+                            AppDestination.Pickup -> PickupScreen(vm = vm)
                             AppDestination.Emergency -> EmergencyAudioScreen(vm = vm)
                             AppDestination.Settings -> SettingsScreen(vm = vm)
                         }

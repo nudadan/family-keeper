@@ -14,18 +14,21 @@ import com.google.android.gms.tasks.CancellationTokenSource
 import com.noesolution.gtracker.data.ApiClient
 import com.noesolution.gtracker.data.AudioLogEntry
 import com.noesolution.gtracker.data.AudioRequestBody
+import com.noesolution.gtracker.data.PickupRequestBody
 import com.noesolution.gtracker.data.Position
 import com.noesolution.gtracker.data.PositionUpload
 import com.noesolution.gtracker.data.Settings
-import com.noesolution.gtracker.data.Track
 import com.noesolution.gtracker.data.SettingsRepository
 import com.noesolution.gtracker.tracker.LocationTrackerService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
+import retrofit2.HttpException
 import java.io.File
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -154,15 +157,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Loads each device's track for the last [hours] hours. */
-    fun loadTracks(hours: Double = 12.0, onResult: (Result<List<Track>>) -> Unit) {
+    // --- Jemput (pickup request) ---
+
+    /**
+     * Sends a pickup request: the server relays it as a WhatsApp message
+     * (text + the device's last known location) to the group's configured
+     * WhatsApp group. [note] is an optional short message (e.g. "di depan sekolah").
+     */
+    fun requestPickup(note: String, onResult: (String) -> Unit) {
         viewModelScope.launch {
             val s = repo.current()
-            val result = runCatching {
-                ApiClient.create(s.backendUrl, s.apiKey, s.groupCode, s.deviceId).tracks(hours).tracks
+            if (s.groupCode.isBlank()) {
+                onResult("⚠️ Isi Group code di Settings dulu.")
+                return@launch
             }
-            onResult(result)
+            try {
+                val deviceId = repo.ensureDeviceId()
+                ApiClient.create(s.backendUrl, s.apiKey, s.groupCode, deviceId)
+                    .requestPickup(PickupRequestBody(note.ifBlank { null }))
+                onResult("✅ Permintaan jemput terkirim ke grup WhatsApp.")
+            } catch (e: Exception) {
+                onResult("❌ ${friendlyError(e)}")
+            }
         }
+    }
+
+    /** Extracts the backend's {"error": "..."} message from an HTTP error response, if present. */
+    private suspend fun friendlyError(e: Exception): String {
+        if (e is HttpException) {
+            val body = withContext(Dispatchers.IO) { e.response()?.errorBody()?.string() }
+            val match = body?.let { Regex("\"error\"\\s*:\\s*\"([^\"]*)\"").find(it) }
+            if (match != null) return match.groupValues[1]
+        }
+        return e.message ?: e.javaClass.simpleName
     }
 
     // --- Emergency audio ---
