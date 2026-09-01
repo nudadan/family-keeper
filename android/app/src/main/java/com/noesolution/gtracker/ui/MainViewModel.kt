@@ -164,7 +164,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * (text + the device's last known location) to the group's configured
      * WhatsApp group. [note] is an optional short message (e.g. "di depan sekolah").
      */
-    fun requestPickup(note: String, onResult: (String) -> Unit) {
+    fun requestPickup(note: String, targetDeviceId: String? = null, onResult: (String) -> Unit) {
         viewModelScope.launch {
             val s = repo.current()
             if (s.groupCode.isBlank()) {
@@ -174,8 +174,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val deviceId = repo.ensureDeviceId()
                 ApiClient.create(s.backendUrl, s.apiKey, s.groupCode, deviceId)
-                    .requestPickup(PickupRequestBody(note.ifBlank { null }))
-                onResult("✅ Permintaan jemput terkirim ke grup WhatsApp.")
+                    .requestPickup(PickupRequestBody(note.ifBlank { null }, targetDeviceId))
+                onResult(
+                    if (targetDeviceId != null) "✅ Peringatan darurat terkirim ke grup WhatsApp."
+                    else "✅ Permintaan jemput terkirim ke grup WhatsApp."
+                )
             } catch (e: Exception) {
                 onResult("❌ ${friendlyError(e)}")
             }
@@ -217,9 +220,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
 
-            onUpdate("Menunggu device merekam…")
-            repeat(20) { // ~60s: record 15s + upload + margin
-                delay(3000)
+            // Target polls for pending requests every ~15s, then records for 15s
+            // and uploads — worst case is roughly 35s. We wait well beyond that
+            // (90s) since this may be the only chance to reach someone in danger.
+            val pollEveryMs = 2000L
+            val maxTries = 45 // 45 * 2s = 90s
+            repeat(maxTries) { i ->
+                delay(pollEveryMs)
+                onUpdate("Menunggu device merekam… (${(i + 1) * pollEveryMs / 1000}d)")
                 val bytes = runCatching { api.downloadClip(requestId).bytes() }.getOrNull()
                 if (bytes != null && bytes.isNotEmpty()) {
                     val file = File(getApplication<Application>().cacheDir, "recv_$requestId.m4a")

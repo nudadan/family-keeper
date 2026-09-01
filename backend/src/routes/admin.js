@@ -103,7 +103,7 @@ const listAudioStmt = db.prepare(`
 `);
 
 const listPickupStmt = db.prepare(`
-  SELECT id, requester_label, note, status, error, created_at
+  SELECT id, requester_label, target_label, note, status, error, created_at
   FROM pickup_requests
   ORDER BY created_at DESC
   LIMIT 100
@@ -549,10 +549,13 @@ const page = (groups, devices, audio, pickup, base) => {
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Waktu</th><th>Peminta</th><th>Catatan</th><th>Status</th></tr></thead>
+        <thead><tr><th>Waktu</th><th>Jenis</th><th>Peminta</th><th>Catatan</th><th>Status</th></tr></thead>
         <tbody>
-        ${pickup.length === 0 ? emptyRow(4, 'Belum ada permintaan jemput.') : pickup.map((p) => `<tr>
+        ${pickup.length === 0 ? emptyRow(5, 'Belum ada permintaan jemput.') : pickup.map((p) => `<tr>
           <td>${fmtTime(p.created_at)}</td>
+          <td>${p.target_label
+            ? `<span class="badge badge-no">SOS: ${esc(p.target_label)}</span>`
+            : '<span class="badge badge-muted">Jemput</span>'}</td>
           <td class="cell-primary">${esc(p.requester_label)}</td>
           <td>${p.note ? esc(p.note) : '<span class="muted">-</span>'}</td>
           <td>${statusBadge(p.status)}${p.error ? `<div class="sub">${esc(p.error)}</div>` : ''}</td>

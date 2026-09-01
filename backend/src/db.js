@@ -88,6 +88,10 @@ db.exec(`
     group_id            TEXT,
     requester_device_id TEXT,
     requester_label     TEXT,
+    -- When set, this is an SOS-style alert ABOUT another device (e.g. "no
+    -- response to an emergency-audio request"), not a self pickup request.
+    target_device_id    TEXT,
+    target_label        TEXT,
     note                TEXT,
     lat                 REAL,
     lng                 REAL,
@@ -98,6 +102,14 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_pickup_group_time
     ON pickup_requests (group_id, created_at DESC);
 `);
+
+const pickupCols = db.prepare('PRAGMA table_info(pickup_requests)').all().map((c) => c.name);
+if (!pickupCols.includes('target_device_id')) {
+  db.exec('ALTER TABLE pickup_requests ADD COLUMN target_device_id TEXT');
+}
+if (!pickupCols.includes('target_label')) {
+  db.exec('ALTER TABLE pickup_requests ADD COLUMN target_label TEXT');
+}
 
 // Emergency audio requests (on-demand clips).
 db.exec(`

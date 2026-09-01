@@ -132,7 +132,10 @@ class LocationTrackerService : LifecycleService() {
                 } catch (_: Exception) {
                     // Network hiccup; try again next cycle.
                 }
-                delay(60_000)
+                // Kept short (not tied to the position-send interval) so an
+                // emergency-audio request is picked up quickly — this device
+                // may belong to someone who cannot act on a slow notification.
+                delay(AUDIO_POLL_INTERVAL_MS)
             }
         }
     }
@@ -226,6 +229,7 @@ class LocationTrackerService : LifecycleService() {
 
     companion object {
         private const val NOTIFICATION_ID = 1001
+        private const val AUDIO_POLL_INTERVAL_MS = 15_000L
         const val ACTION_START = "com.noesolution.gtracker.START"
         const val ACTION_STOP = "com.noesolution.gtracker.STOP"
 
