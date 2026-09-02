@@ -232,15 +232,6 @@ const page = (groups, devices, audio, pickup, base) => {
 
   main { width: 95%; max-width: 1800px; margin: 0 auto; padding: 20px 0; }
 
-  /* --- Two-column layout: tables left (40%), map right (60%) --- */
-  .layout { display: grid; grid-template-columns: 2fr 3fr; gap: 20px; align-items: start; }
-  .col-left { min-width: 0; }
-  .col-right { min-width: 0; position: sticky; top: 76px; }
-  @media (max-width: 900px) {
-    .layout { display: block; }
-    .col-right { position: static; }
-  }
-
   /* --- Stat cards --- */
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 28px; }
   .stat-card {
@@ -425,9 +416,6 @@ const page = (groups, devices, audio, pickup, base) => {
     <div class="stat-card"><div class="stat-value" id="stat-pending">${pendingCount}</div><div class="stat-label">Permintaan pending</div></div>
   </div>
 
-  <div class="layout">
-  <div class="col-left">
-
   <section id="groups" class="panel">
     <div class="panel-head">
       <span class="icon-badge">${icon.groups}</span>
@@ -474,6 +462,29 @@ const page = (groups, devices, audio, pickup, base) => {
         </tbody>
       </table>
     </div>
+  </section>
+
+  <section id="map" class="panel">
+    <div class="panel-head">
+      <span class="icon-badge">${icon.map}</span>
+      <h2>Peta Posisi</h2>
+      <span class="count" id="map-status">-</span>
+    </div>
+    <div class="toolbar map-toolbar">
+      <select id="map-group-select" class="search-input">
+        ${groups.map((g) => `<option value="${esc(g.group_id)}">${g.name ? esc(g.name) : esc(g.group_id)} (${g.device_count})</option>`).join('')}
+      </select>
+      <button type="button" id="map-refresh-btn" class="btn">${icon.refresh} Refresh</button>
+    </div>
+    ${MAPS_API_KEY ? `
+    <div id="map-canvas"></div>
+    <div id="map-legend" class="map-legend"></div>
+    ` : `
+    <div class="empty-state">
+      Google Maps API key belum diatur di server (env <code>MAPS_API_KEY</code>).<br>
+      Set nilainya lalu restart service untuk mengaktifkan peta.
+    </div>
+    `}
   </section>
 
   <section id="devices" class="panel">
@@ -564,35 +575,6 @@ const page = (groups, devices, audio, pickup, base) => {
       </table>
     </div>
   </section>
-
-  </div>
-  <div class="col-right">
-
-  <section id="map" class="panel">
-    <div class="panel-head">
-      <span class="icon-badge">${icon.map}</span>
-      <h2>Peta Posisi</h2>
-      <span class="count" id="map-status">-</span>
-    </div>
-    <div class="toolbar map-toolbar">
-      <select id="map-group-select" class="search-input">
-        ${groups.map((g) => `<option value="${esc(g.group_id)}">${g.name ? esc(g.name) : esc(g.group_id)} (${g.device_count})</option>`).join('')}
-      </select>
-      <button type="button" id="map-refresh-btn" class="btn">${icon.refresh} Refresh</button>
-    </div>
-    ${MAPS_API_KEY ? `
-    <div id="map-canvas"></div>
-    <div id="map-legend" class="map-legend"></div>
-    ` : `
-    <div class="empty-state">
-      Google Maps API key belum diatur di server (env <code>MAPS_API_KEY</code>).<br>
-      Set nilainya lalu restart service untuk mengaktifkan peta.
-    </div>
-    `}
-  </section>
-
-  </div>
-  </div>
 
   <footer>Gardenia-1 · GTracker backend admin</footer>
 </main>
