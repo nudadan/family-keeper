@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
@@ -39,6 +40,7 @@ class LocationTrackerService : LifecycleService() {
     private lateinit var fusedClient: FusedLocationProviderClient
     private lateinit var settingsRepo: SettingsRepository
     private var audioPollingStarted = false
+    private var wakeLock: PowerManager.WakeLock? = null
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -73,6 +75,7 @@ class LocationTrackerService : LifecycleService() {
 
     private fun startTracking() {
         startForegroundWithNotification()
+        acquireWakeLock()
 
         lifecycleScope.launch {
             val settings = settingsRepo.current()
@@ -160,6 +163,7 @@ class LocationTrackerService : LifecycleService() {
 
     private fun stopTracking() {
         fusedClient.removeLocationUpdates(locationCallback)
+        releaseWakeLock()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -167,6 +171,37 @@ class LocationTrackerService : LifecycleService() {
             stopForeground(true)
         }
         stopSelf()
+    }
+
+    /**
+     * Holds the CPU awake (screen may still be off) so GPS fixes keep arriving
+     * and getting uploaded while the device is locked. A foreground service
+     * alone only protects the process from being killed and from most Doze
+     * restrictions — it does not stop the CPU from deep-sleeping, which is
+     * what actually stalls background location delivery on many devices,
+     * especially older ones. Without this, pending fixes only flush once the
+     * user unlocks the screen and wakes the CPU themselves.
+     */
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "GTracker::LocationTrackingWakeLock",
+        ).apply {
+            setReferenceCounted(false)
+            acquire()
+        }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
+    }
+
+    override fun onDestroy() {
+        releaseWakeLock()
+        super.onDestroy()
     }
 
     private fun uploadLocation(
