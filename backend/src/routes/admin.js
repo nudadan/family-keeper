@@ -80,17 +80,17 @@ const listGroupsStmt = db.prepare(`
     g.name,
     g.show_admins_to_members,
     g.whatsapp_group_id,
-    (SELECT COUNT(*) FROM devices d WHERE COALESCE(d.group_id, 'default') = g.group_id) AS device_count
+    (SELECT COUNT(*) FROM devices d WHERE COALESCE(d.group_id, 'default') = g.group_id AND d.blocked_at IS NULL) AS device_count
   FROM groups g
   ORDER BY (g.name IS NULL), g.name, g.group_id
 `);
 
 const listDevicesStmt = db.prepare(`
   SELECT
-    d.device_id, d.label, d.group_id, d.type, d.last_seen, d.allow_audio,
+    d.device_id, d.label, d.group_id, d.type, d.last_seen, d.allow_audio, d.blocked_at,
     (SELECT name FROM groups g WHERE g.group_id = COALESCE(d.group_id, 'default')) AS group_name
   FROM devices d
-  ORDER BY d.last_seen DESC
+  ORDER BY (d.blocked_at IS NOT NULL), d.last_seen DESC
 `);
 
 const listAudioStmt = db.prepare(`
@@ -141,6 +141,7 @@ const icon = {
   swap: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>',
   trash: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
   car: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17H3v-6l2-5h11l4 5v6h-2"/><circle cx="7.5" cy="17.5" r="2.5"/><circle cx="16.5" cy="17.5" r="2.5"/><path d="M5 12h14"/></svg>',
+  unlock: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>',
 };
 
 function typeBadge(type) {
@@ -171,9 +172,10 @@ function emptyRow(colspan, text) {
 }
 
 const page = (groups, devices, audio, pickup, base) => {
-  const adminCount = devices.filter((d) => d.type === 'admin').length;
-  const memberCount = devices.length - adminCount;
-  const consentCount = devices.filter((d) => d.allow_audio).length;
+  const activeDevices = devices.filter((d) => !d.blocked_at);
+  const adminCount = activeDevices.filter((d) => d.type === 'admin').length;
+  const memberCount = activeDevices.length - adminCount;
+  const consentCount = activeDevices.filter((d) => d.allow_audio).length;
   const pendingCount = audio.filter((a) => a.status === 'pending').length;
 
   return `<!doctype html>
@@ -409,7 +411,7 @@ const page = (groups, devices, audio, pickup, base) => {
 <main>
   <div class="stats">
     <div class="stat-card"><div class="stat-value" id="stat-groups">${groups.length}</div><div class="stat-label">Grup</div></div>
-    <div class="stat-card"><div class="stat-value" id="stat-devices">${devices.length}</div><div class="stat-label">Perangkat</div></div>
+    <div class="stat-card"><div class="stat-value" id="stat-devices">${activeDevices.length}</div><div class="stat-label">Perangkat</div></div>
     <div class="stat-card"><div class="stat-value" id="stat-admin">${adminCount}</div><div class="stat-label">Admin</div></div>
     <div class="stat-card"><div class="stat-value" id="stat-member">${memberCount}</div><div class="stat-label">Member</div></div>
     <div class="stat-card"><div class="stat-value" id="stat-consent">${consentCount}</div><div class="stat-label">Izin audio aktif</div></div>
@@ -504,21 +506,26 @@ const page = (groups, devices, audio, pickup, base) => {
         ${devices.length === 0 ? emptyRow(6, 'Belum ada perangkat terdaftar.') : devices.map((d) => {
           const name = d.label || d.device_id;
           const searchKey = esc(`${d.label || ''} ${d.device_id} ${d.group_name || ''}`.toLowerCase());
+          const blocked = !!d.blocked_at;
           return `<tr data-device-row data-search="${searchKey}" data-name="${esc(name)}">
           <td class="cell-primary">${d.label ? esc(d.label) : '<span class="muted">(tanpa nama)</span>'}</td>
           <td><span class="mono">${esc(d.device_id)}</span><div class="sub">${d.group_name ? esc(d.group_name) : esc(d.group_id || 'default')}</div></td>
-          <td class="type-cell">${typeBadge(d.type)}</td>
+          <td class="type-cell">${blocked ? '<span class="badge badge-no">Diblokir</span>' : typeBadge(d.type)}</td>
           <td class="consent-cell">${consentBadge(d.allow_audio)}</td>
           <td>${fmtTime(d.last_seen)}<div class="sub">${timeAgo(d.last_seen)}</div></td>
           <td>
             <div class="actions">
+              ${blocked ? `
+              <form class="inline js-unblock" method="post" action="device/${encodeURIComponent(d.device_id)}/unblock">
+                <button type="submit" class="icon-btn btn-primary" title="Buka blokir perangkat" aria-label="Buka blokir perangkat">${icon.unlock}</button>
+              </form>` : `
               <form class="inline js-type" method="post" action="device/${encodeURIComponent(d.device_id)}/type">
                 <input type="hidden" name="type" value="${d.type === 'admin' ? 'member' : 'admin'}">
                 <button type="submit" class="icon-btn" title="Jadikan ${d.type === 'admin' ? 'Member' : 'Admin'}" aria-label="Jadikan ${d.type === 'admin' ? 'Member' : 'Admin'}">${icon.swap}</button>
               </form>
               <form class="inline js-delete" method="post" action="device/${encodeURIComponent(d.device_id)}/delete">
-                <button type="submit" class="icon-btn btn-danger" title="Hapus perangkat" aria-label="Hapus perangkat">${icon.trash}</button>
-              </form>
+                <button type="submit" class="icon-btn btn-danger" title="Hapus &amp; blokir perangkat" aria-label="Hapus &amp; blokir perangkat">${icon.trash}</button>
+              </form>`}
             </div>
           </td>
         </tr>`;
@@ -665,7 +672,8 @@ const page = (groups, devices, audio, pickup, base) => {
       var row = form.closest('tr');
       var name = row.getAttribute('data-name') || 'perangkat ini';
       confirmModal(
-        'Hapus "' + name + '" beserta seluruh riwayat posisinya? Tindakan ini tidak bisa dibatalkan.',
+        'Hapus & blokir "' + name + '"? Riwayat posisinya akan dihapus dan perangkat ini tidak akan ' +
+          'muncul lagi meski masih mengirim lokasi — bisa dibuka blokirnya lagi kapan saja dari daftar ini.',
         'Hapus'
       ).then(function (ok) {
         if (!ok) return;
@@ -677,7 +685,7 @@ const page = (groups, devices, audio, pickup, base) => {
             ensureDevicesEmptyState();
             updateDeviceCounts();
           }, 200);
-          toast('"' + name + '" berhasil dihapus.', 'success');
+          toast('"' + name + '" dihapus & diblokir.', 'success');
         }).catch(function () {
           toast('Gagal menghapus perangkat. Coba lagi.', 'error');
         });
@@ -1018,13 +1026,22 @@ router.post('/device/:id/type', (req, res) => {
 });
 
 const delPositionsStmt = db.prepare('DELETE FROM positions WHERE device_id = ?');
-const delDeviceStmt = db.prepare('DELETE FROM devices WHERE device_id = ?');
+const blockDeviceStmt = db.prepare('UPDATE devices SET blocked_at = ? WHERE device_id = ?');
+// "Delete" blocks the device instead of removing its registry row — a plain
+// DELETE would just get undone by the device's own tracker re-registering
+// itself on its next GPS fix. Position history is still purged.
 router.post('/device/:id/delete', (req, res) => {
   const tx = db.transaction((id) => {
     delPositionsStmt.run(id);
-    delDeviceStmt.run(id);
+    blockDeviceStmt.run(Date.now(), id);
   });
   tx(req.params.id);
+  res.redirect(home(req));
+});
+
+const unblockDeviceStmt = db.prepare('UPDATE devices SET blocked_at = NULL WHERE device_id = ?');
+router.post('/device/:id/unblock', (req, res) => {
+  unblockDeviceStmt.run(req.params.id);
   res.redirect(home(req));
 });
 

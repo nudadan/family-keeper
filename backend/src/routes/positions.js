@@ -28,6 +28,14 @@ function requesterIsAdmin(req) {
   return !!row && row.type === 'admin';
 }
 
+// A device an admin removed stays blocked until explicitly unblocked — see
+// the blocked_at column comment in db.js.
+const deviceBlockedStmt = db.prepare('SELECT blocked_at FROM devices WHERE device_id = ?');
+function isBlocked(deviceId) {
+  const row = deviceBlockedStmt.get(deviceId);
+  return !!row && row.blocked_at != null;
+}
+
 // A group can opt in (from the admin site) to let members see admin devices
 // too — i.e. disable the member/admin visibility split for that group.
 const groupFlatVisibilityStmt = db.prepare(
@@ -60,8 +68,9 @@ const upsertDeviceStmt = db.prepare(`
     last_seen   = excluded.last_seen
 `);
 
-// "AND visible" predicate used by all read queries.
+// "AND visible" predicates used by all read queries.
 const VISIBLE = "(@admins = 1 OR @flat = 1 OR COALESCE(dev.type, 'member') <> 'admin')";
+const NOT_BLOCKED = 'dev.blocked_at IS NULL';
 
 const latestPerDeviceStmt = db.prepare(`
   SELECT p.*
@@ -73,7 +82,7 @@ const latestPerDeviceStmt = db.prepare(`
     GROUP BY device_id
   ) m ON p.device_id = m.device_id AND p.recorded_at = m.max_time
   LEFT JOIN devices dev ON dev.device_id = p.device_id
-  WHERE COALESCE(p.group_id, 'default') = @g AND ${VISIBLE}
+  WHERE COALESCE(p.group_id, 'default') = @g AND ${VISIBLE} AND ${NOT_BLOCKED}
   GROUP BY p.device_id
   ORDER BY p.device_id
 `);
@@ -82,7 +91,7 @@ const latestForDeviceStmt = db.prepare(`
   SELECT p.*
   FROM positions p
   LEFT JOIN devices dev ON dev.device_id = p.device_id
-  WHERE p.device_id = @d AND COALESCE(p.group_id, 'default') = @g AND ${VISIBLE}
+  WHERE p.device_id = @d AND COALESCE(p.group_id, 'default') = @g AND ${VISIBLE} AND ${NOT_BLOCKED}
   ORDER BY p.recorded_at DESC
   LIMIT 1
 `);
@@ -91,7 +100,7 @@ const historyStmt = db.prepare(`
   SELECT p.*
   FROM positions p
   LEFT JOIN devices dev ON dev.device_id = p.device_id
-  WHERE p.device_id = @d AND COALESCE(p.group_id, 'default') = @g AND ${VISIBLE}
+  WHERE p.device_id = @d AND COALESCE(p.group_id, 'default') = @g AND ${VISIBLE} AND ${NOT_BLOCKED}
   ORDER BY p.recorded_at DESC
   LIMIT @lim
 `);
@@ -108,7 +117,7 @@ const devicesStmt = db.prepare(`
        ORDER BY x.recorded_at DESC LIMIT 1) AS label
   FROM positions p
   LEFT JOIN devices dev ON dev.device_id = p.device_id
-  WHERE COALESCE(p.group_id, 'default') = @g AND ${VISIBLE}
+  WHERE COALESCE(p.group_id, 'default') = @g AND ${VISIBLE} AND ${NOT_BLOCKED}
   GROUP BY p.device_id
   ORDER BY last_seen DESC
 `);
@@ -117,7 +126,7 @@ const tracksStmt = db.prepare(`
   SELECT p.device_id, p.label, p.lat, p.lng, p.accuracy, p.speed, p.recorded_at
   FROM positions p
   LEFT JOIN devices dev ON dev.device_id = p.device_id
-  WHERE p.recorded_at >= @since AND COALESCE(p.group_id, 'default') = @g AND ${VISIBLE}
+  WHERE p.recorded_at >= @since AND COALESCE(p.group_id, 'default') = @g AND ${VISIBLE} AND ${NOT_BLOCKED}
   ORDER BY p.device_id, p.recorded_at ASC
 `);
 
@@ -126,7 +135,7 @@ const tracksForDeviceStmt = db.prepare(`
   FROM positions p
   LEFT JOIN devices dev ON dev.device_id = p.device_id
   WHERE p.device_id = @d AND p.recorded_at >= @since
-    AND COALESCE(p.group_id, 'default') = @g AND ${VISIBLE}
+    AND COALESCE(p.group_id, 'default') = @g AND ${VISIBLE} AND ${NOT_BLOCKED}
   ORDER BY p.recorded_at ASC
 `);
 
@@ -161,6 +170,10 @@ router.post('/', (req, res) => {
   }
   if (Number.isNaN(accuracy) || Number.isNaN(speed) || Number.isNaN(recordedAt)) {
     return res.status(400).json({ error: 'accuracy, speed and timestamp must be numbers when provided' });
+  }
+
+  if (isBlocked(deviceId)) {
+    return res.status(403).json({ error: 'Device diblokir oleh admin.' });
   }
 
   const groupId = groupIdFromReq(req);

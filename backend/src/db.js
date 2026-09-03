@@ -68,6 +68,13 @@ const deviceCols = db.prepare('PRAGMA table_info(devices)').all().map((c) => c.n
 if (!deviceCols.includes('allow_audio')) {
   db.exec('ALTER TABLE devices ADD COLUMN allow_audio INTEGER NOT NULL DEFAULT 0');
 }
+// Set (to the block time) when an admin removes a device: future position
+// uploads from it are rejected and it stays hidden everywhere until an admin
+// explicitly unblocks it — a plain DELETE isn't enough since the device's own
+// tracker app would just re-register it on its next GPS fix.
+if (!deviceCols.includes('blocked_at')) {
+  db.exec('ALTER TABLE devices ADD COLUMN blocked_at INTEGER');
+}
 
 // Per-group opt-in: when set, members can see admin devices' positions too
 // (normally hidden from members). Managed only from the admin site.
