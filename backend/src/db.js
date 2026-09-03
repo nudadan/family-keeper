@@ -75,6 +75,21 @@ if (!deviceCols.includes('allow_audio')) {
 if (!deviceCols.includes('blocked_at')) {
   db.exec('ALTER TABLE devices ADD COLUMN blocked_at INTEGER');
 }
+if (!deviceCols.includes('battery_percent')) {
+  db.exec('ALTER TABLE devices ADD COLUMN battery_percent INTEGER');
+}
+// Set when a low-battery WhatsApp alert has already been sent for the
+// CURRENT low-battery episode, so we don't re-notify on every fix while the
+// battery stays low. Cleared once it recovers past the reset threshold.
+if (!deviceCols.includes('battery_alert_sent_at')) {
+  db.exec('ALTER TABLE devices ADD COLUMN battery_alert_sent_at INTEGER');
+}
+// Set when a "belum lapor" (stale / no updates) WhatsApp alert has already
+// been sent for the device's current silent stretch. Cleared automatically
+// the moment it reports a position again.
+if (!deviceCols.includes('stale_alert_sent_at')) {
+  db.exec('ALTER TABLE devices ADD COLUMN stale_alert_sent_at INTEGER');
+}
 
 // Per-group opt-in: when set, members can see admin devices' positions too
 // (normally hidden from members). Managed only from the admin site.
@@ -141,6 +156,30 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_audio_target_status
     ON audio_requests (target_device_id, status);
+`);
+
+// Geofences ("Zona Aman"): a named circle an admin draws for their group.
+// geofence_state tracks each device's last-known inside/outside per zone so
+// we can detect enter/exit transitions instead of notifying on every fix.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS geofences (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id   TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    lat        REAL NOT NULL,
+    lng        REAL NOT NULL,
+    radius_m   REAL NOT NULL,
+    created_at INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_geofences_group ON geofences (group_id);
+
+  CREATE TABLE IF NOT EXISTS geofence_state (
+    device_id   TEXT NOT NULL,
+    geofence_id INTEGER NOT NULL,
+    inside      INTEGER NOT NULL DEFAULT 0,
+    updated_at  INTEGER,
+    PRIMARY KEY (device_id, geofence_id)
+  );
 `);
 
 // Folder for stored audio clips.

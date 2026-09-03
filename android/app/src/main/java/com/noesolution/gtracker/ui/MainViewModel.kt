@@ -195,6 +195,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Routine "I'm okay" ping — a lightweight, non-urgent complement to the
+     * SOS button. Sends a check-in WhatsApp message (+ last known location if
+     * available) to the group so family can see it without anyone having to
+     * ask.
+     */
+    fun checkIn(onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            val s = repo.current()
+            if (s.groupCode.isBlank()) {
+                onResult("⚠️ Isi Group code di Settings dulu.")
+                return@launch
+            }
+            try {
+                val deviceId = repo.ensureDeviceId()
+                ApiClient.create(s.backendUrl, s.apiKey, s.groupCode, deviceId)
+                    .requestPickup(PickupRequestBody(note = null, kind = "checkin"))
+                onResult("✅ Check-in terkirim ke grup WhatsApp.")
+            } catch (e: Exception) {
+                onResult("❌ ${friendlyError(e)}")
+            }
+        }
+    }
+
+    /**
      * Self-initiated emergency SOS: sends an urgent WhatsApp alert with the
      * device's current location to the group, and boosts this device's own
      * location-send frequency for the next 15 minutes so family can follow

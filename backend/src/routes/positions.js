@@ -3,6 +3,8 @@
 const express = require('express');
 const crypto = require('crypto');
 const db = require('../db');
+const { checkGeofences } = require('../geofence');
+const { checkBattery } = require('../battery');
 
 const router = express.Router();
 
@@ -65,7 +67,8 @@ const upsertDeviceStmt = db.prepare(`
     group_id    = excluded.group_id,
     label       = COALESCE(excluded.label, devices.label),
     allow_audio = excluded.allow_audio,
-    last_seen   = excluded.last_seen
+    last_seen   = excluded.last_seen,
+    stale_alert_sent_at = NULL
 `);
 
 // "AND visible" predicates used by all read queries.
@@ -158,6 +161,10 @@ router.post('/', (req, res) => {
   const accuracy = toNumber(body.accuracy);
   const speed = toNumber(body.speed);
   const recordedAt = body.timestamp !== undefined ? toNumber(body.timestamp) : Date.now();
+  const batteryPercentRaw = toNumber(body.batteryPercent);
+  const batteryPercent = Number.isFinite(batteryPercentRaw) && batteryPercentRaw >= 0 && batteryPercentRaw <= 100
+    ? Math.round(batteryPercentRaw)
+    : null;
 
   if (!deviceId) {
     return res.status(400).json({ error: 'deviceId is required' });
@@ -196,6 +203,10 @@ router.post('/', (req, res) => {
   });
 
   res.status(201).json({ id: info.lastInsertRowid, ok: true });
+
+  // Fire-and-forget: never delay or fail the upload response for these.
+  checkGeofences({ deviceId, groupId, lat, lng, label, now }).catch(() => {});
+  checkBattery({ deviceId, groupId, batteryPercent, label, now }).catch(() => {});
 });
 
 // GET /api/positions/latest -> latest fix for every visible device in the group

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.PeopleAlt
@@ -19,6 +20,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -63,6 +65,8 @@ fun HomeScreen(
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var centered by remember { mutableStateOf(false) }
     var selectedDeviceId by remember { mutableStateOf<String?>(null) }
+    var checkInSending by remember { mutableStateOf(false) }
+    var checkInStatus by remember { mutableStateOf("") }
 
     val locale = remember { Locale("id", "ID") }
     val timeFmt = remember { SimpleDateFormat("HH:mm:ss", locale) }
@@ -162,6 +166,43 @@ fun HomeScreen(
                         text = "${positions.size} device aktif",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.secondary,
+                    )
+                }
+            }
+        }
+
+        // Check-in: a lightweight, non-urgent "I'm okay" ping — complements
+        // the SOS button on the Darurat screen without living on the same
+        // screen (different tone, shouldn't be reachable by the same reflex).
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(16.dp),
+            horizontalAlignment = Alignment.End,
+        ) {
+            ExtendedFloatingActionButton(
+                onClick = {
+                    checkInSending = true
+                    checkInStatus = ""
+                    vm.checkIn { st ->
+                        checkInSending = false
+                        checkInStatus = st
+                    }
+                },
+                icon = { Icon(Icons.Filled.CheckCircle, contentDescription = null) },
+                text = { Text(if (checkInSending) "Mengirim…" else "Saya Baik-Baik Saja") },
+            )
+            if (checkInStatus.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    shadowElevation = 4.dp,
+                    shape = MaterialTheme.shapes.small,
+                ) {
+                    Text(
+                        text = checkInStatus,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     )
                 }
             }

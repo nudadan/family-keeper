@@ -28,8 +28,8 @@ android {
         applicationId = "com.noesolution.gtracker"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = 8
+        versionName = "1.7"
 
         // Injected into AndroidManifest.xml as ${MAPS_API_KEY}
         manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey

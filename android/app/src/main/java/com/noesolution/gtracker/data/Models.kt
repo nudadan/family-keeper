@@ -12,6 +12,7 @@ data class PositionUpload(
     val speed: Double?,
     val timestamp: Long,
     val allowAudio: Boolean,
+    val batteryPercent: Int? = null,
 )
 
 /** A pending emergency-audio request targeting this device. */

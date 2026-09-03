@@ -9,6 +9,7 @@ const positionsRouter = require('./routes/positions');
 const audioRouter = require('./routes/audio');
 const pickupRouter = require('./routes/pickup');
 const adminRouter = require('./routes/admin');
+const { startStaleWatchdog } = require('./staleWatchdog');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -59,4 +60,5 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`GTracker backend listening on port ${PORT}`);
+  startStaleWatchdog();
 });

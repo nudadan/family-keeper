@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
@@ -256,12 +257,20 @@ class LocationTrackerService : LifecycleService() {
                         speed = speed,
                         timestamp = timestamp,
                         allowAudio = settings.allowAudio,
+                        batteryPercent = currentBatteryPercent(),
                     )
                 )
             } catch (e: Exception) {
                 // Network/server error: skip this fix. The next one will retry.
             }
         }
+    }
+
+    /** Current battery charge, 0-100, or null if unavailable. */
+    private fun currentBatteryPercent(): Int? {
+        val bm = getSystemService(Context.BATTERY_SERVICE) as? BatteryManager ?: return null
+        val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        return pct.takeIf { it in 0..100 }
     }
 
     private fun startForegroundWithNotification() {

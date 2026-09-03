@@ -8,12 +8,9 @@
 const express = require('express');
 const crypto = require('crypto');
 const db = require('../db');
+const { whatshubConfigured, sendWhatsHubMessage, wibTime } = require('../whatshub');
 
 const router = express.Router();
-
-const WHATSHUB_BASE_URL = process.env.WHATSHUB_BASE_URL || 'https://whatshub.noesantara.online';
-const WHATSHUB_APP_ID = process.env.WHATSHUB_APP_ID || '';
-const WHATSHUB_SECRET_KEY = process.env.WHATSHUB_SECRET_KEY || '';
 
 // Requests from the same device more often than this are rejected, to avoid
 // accidental double-taps and WhatsApp message-quota / anti-ban issues.
@@ -50,39 +47,16 @@ const logStmt = db.prepare(`
   LIMIT 100
 `);
 
-async function sendWhatsHubMessage(payload) {
-  const res = await fetch(`${WHATSHUB_BASE_URL}/api/v1/messages/send`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      app_id: WHATSHUB_APP_ID,
-      secret_key: WHATSHUB_SECRET_KEY,
-      ...payload,
-    }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || data.success === false) {
-    const msg = data.error || `WhatsHub HTTP ${res.status}`;
-    throw new Error(msg);
-  }
-  return data;
-}
-
-function wibTime(ms) {
-  return new Intl.DateTimeFormat('id-ID', {
-    timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(new Date(ms));
-}
-
 // POST /api/pickup/request  { note?: string, targetDeviceId?: string, kind?: string }
 //
 // Without targetDeviceId: a self pickup request ("I need a ride"), or — when
-// kind === 'sos' — a self-initiated emergency alert ("I need help").
+// kind === 'sos' — a self-initiated emergency alert ("I need help"), or —
+// when kind === 'checkin' — a routine "I'm okay" ping (not urgent).
 // With targetDeviceId: an SOS-style alert about ANOTHER device — used when an
 // emergency-audio request to that device times out, so the family still gets
 // an actionable notification + last-known location even if audio fails.
 router.post('/request', async (req, res) => {
-  if (!WHATSHUB_APP_ID || !WHATSHUB_SECRET_KEY) {
+  if (!whatshubConfigured()) {
     return res.status(500).json({ error: 'WhatsHub belum dikonfigurasi di server (.env)' });
   }
 
@@ -94,6 +68,7 @@ router.post('/request', async (req, res) => {
   const note = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, 300) : '';
   const targetId = typeof req.body?.targetDeviceId === 'string' ? req.body.targetDeviceId.trim() : '';
   const isSelfSos = !targetId && req.body?.kind === 'sos';
+  const isCheckIn = !targetId && req.body?.kind === 'checkin';
 
   const g = groupIdFromReq(req);
   const group = getGroupStmt.get(g);
@@ -145,6 +120,9 @@ router.post('/request', async (req, res) => {
     text += position
       ? '\n\nLokasi terkini di bawah ini 👇'
       : '\n\n(Lokasi belum tersedia)';
+  } else if (isCheckIn) {
+    text = `✅ *Saya Baik-Baik Saja*\n\n*${requesterLabel}* baru saja check-in.\n🕒 ${timeStr} WIB`;
+    if (note) text += `\n📝 ${note}`;
   } else {
     text = `🚗 *Permintaan Jemput*\n\n*${requesterLabel}* minta dijemput.\n🕒 ${timeStr} WIB`;
     if (note) text += `\n📝 ${note}`;
@@ -186,7 +164,7 @@ router.post('/request', async (req, res) => {
     status,
     error,
     created_at: now,
-    kind: targetId ? 'sos_target' : isSelfSos ? 'sos_self' : 'pickup',
+    kind: targetId ? 'sos_target' : isSelfSos ? 'sos_self' : isCheckIn ? 'checkin' : 'pickup',
   });
 
   if (status === 'failed') {

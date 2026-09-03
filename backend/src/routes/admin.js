@@ -88,9 +88,18 @@ const listGroupsStmt = db.prepare(`
 const listDevicesStmt = db.prepare(`
   SELECT
     d.device_id, d.label, d.group_id, d.type, d.last_seen, d.allow_audio, d.blocked_at,
+    d.battery_percent,
     (SELECT name FROM groups g WHERE g.group_id = COALESCE(d.group_id, 'default')) AS group_name
   FROM devices d
   ORDER BY (d.blocked_at IS NOT NULL), d.last_seen DESC
+`);
+
+const listGeofencesStmt = db.prepare(`
+  SELECT
+    z.id, z.group_id, z.name, z.lat, z.lng, z.radius_m, z.created_at,
+    (SELECT name FROM groups g WHERE g.group_id = z.group_id) AS group_name
+  FROM geofences z
+  ORDER BY z.created_at DESC
 `);
 
 const listAudioStmt = db.prepare(`
@@ -142,6 +151,8 @@ const icon = {
   trash: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
   car: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17H3v-6l2-5h11l4 5v6h-2"/><circle cx="7.5" cy="17.5" r="2.5"/><circle cx="16.5" cy="17.5" r="2.5"/><path d="M5 12h14"/></svg>',
   unlock: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>',
+  zone: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg>',
+  route: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M8.2 17.4 15.8 6.6"/></svg>',
 };
 
 function typeBadge(type) {
@@ -153,6 +164,12 @@ function consentBadge(allow) {
   return allow
     ? `<span class="badge badge-yes">${icon.check} Ya</span>`
     : `<span class="badge badge-muted">Tidak</span>`;
+}
+
+function batteryBadge(percent) {
+  if (percent == null) return '<span class="muted">-</span>';
+  const cls = percent <= 15 ? 'badge-no' : percent <= 30 ? 'badge-pending' : 'badge-yes';
+  return `<span class="badge ${cls}">${percent}%</span>`;
 }
 
 function statusBadge(status) {
@@ -171,7 +188,7 @@ function emptyRow(colspan, text) {
   return `<tr><td colspan="${colspan}" class="empty-state">${esc(text)}</td></tr>`;
 }
 
-const page = (groups, devices, audio, pickup, base) => {
+const page = (groups, devices, audio, pickup, geofences, base) => {
   const activeDevices = devices.filter((d) => !d.blocked_at);
   const adminCount = activeDevices.filter((d) => d.type === 'admin').length;
   const memberCount = activeDevices.length - adminCount;
@@ -333,12 +350,19 @@ const page = (groups, devices, audio, pickup, base) => {
   }
   .search-input:focus { outline: 2px solid var(--primary-light); border-color: var(--primary); }
 
+  /* --- Zona Aman add form --- */
+  .zone-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .zone-form input, .zone-form select { flex: 1 1 140px; min-width: 0; }
+  .zone-form input[name=radius_m] { flex: 0 1 110px; }
+  .zone-form .btn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; }
+
   /* --- Map --- */
   .map-toolbar { display: flex; gap: 8px; align-items: center; }
   .map-toolbar select { flex: 1; }
   .map-toolbar .btn { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
   #map-canvas { width: 100%; height: 560px; background: var(--grey-bg); }
-  @media (max-width: 900px) { #map-canvas { height: 420px; } }
+  #track-map-canvas { width: 100%; height: 420px; background: var(--grey-bg); }
+  @media (max-width: 900px) { #map-canvas { height: 420px; } #track-map-canvas { height: 320px; } }
   .map-legend { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--border); }
   .map-legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
   .map-legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
@@ -399,7 +423,9 @@ const page = (groups, devices, audio, pickup, base) => {
     </div>
     <nav class="topnav">
       <a href="#map">${icon.map}<span class="label">Peta</span></a>
+      <a href="#tracks">${icon.route}<span class="label">Riwayat Rute</span></a>
       <a href="#groups">${icon.groups}<span class="label">Grup</span></a>
+      <a href="#zones">${icon.zone}<span class="label">Zona Aman</span></a>
       <a href="#devices">${icon.devices}<span class="label">Perangkat</span></a>
       <a href="#audio">${icon.audio}<span class="label">Audio Darurat</span></a>
       <a href="#pickup">${icon.car}<span class="label">Jemput</span></a>
@@ -489,6 +515,75 @@ const page = (groups, devices, audio, pickup, base) => {
     `}
   </section>
 
+  <section id="tracks" class="panel">
+    <div class="panel-head">
+      <span class="icon-badge">${icon.route}</span>
+      <h2>Riwayat Rute</h2>
+      <span class="count" id="track-status">-</span>
+    </div>
+    <div class="toolbar map-toolbar">
+      <select id="track-device-select" class="search-input">
+        ${activeDevices.length === 0
+          ? '<option value="">(belum ada perangkat)</option>'
+          : activeDevices.map((d) => `<option value="${esc(d.device_id)}">${esc(d.label || d.device_id)}</option>`).join('')}
+      </select>
+      <select id="track-hours-select" class="search-input">
+        <option value="1">1 jam</option>
+        <option value="6">6 jam</option>
+        <option value="24" selected>24 jam</option>
+        <option value="72">3 hari</option>
+        <option value="168">7 hari</option>
+      </select>
+      <button type="button" id="track-load-btn" class="btn btn-primary">${icon.route} Tampilkan</button>
+    </div>
+    ${MAPS_API_KEY ? `
+    <div id="track-map-canvas"></div>
+    ` : `
+    <div class="empty-state">
+      Google Maps API key belum diatur di server (env <code>MAPS_API_KEY</code>).<br>
+      Set nilainya lalu restart service untuk mengaktifkan peta.
+    </div>
+    `}
+  </section>
+
+  <section id="zones" class="panel">
+    <div class="panel-head">
+      <span class="icon-badge">${icon.zone}</span>
+      <h2>Zona Aman</h2>
+      <span class="count" id="zones-count">${geofences.length} zona</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Nama</th><th>Grup</th><th>Koordinat</th><th>Radius</th><th>Aksi</th></tr></thead>
+        <tbody id="zones-tbody">
+        ${geofences.length === 0 ? emptyRow(5, 'Belum ada zona aman.') : geofences.map((z) => `<tr data-zone-row data-name="${esc(z.name)}">
+          <td class="cell-primary">${esc(z.name)}</td>
+          <td>${z.group_name ? esc(z.group_name) : esc(z.group_id)}</td>
+          <td class="mono">${z.lat.toFixed(5)}, ${z.lng.toFixed(5)}</td>
+          <td>${Math.round(z.radius_m)} m</td>
+          <td>
+            <form class="inline js-zone-delete" method="post" action="geofence/${z.id}/delete">
+              <button type="submit" class="icon-btn btn-danger" title="Hapus zona" aria-label="Hapus zona">${icon.trash}</button>
+            </form>
+          </td>
+        </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="toolbar">
+      <form method="post" action="geofence/add" class="zone-form">
+        <input type="text" name="name" class="search-input" placeholder="Nama zona (mis. Rumah)" required>
+        <select name="group_id" class="search-input">
+          ${groups.map((g) => `<option value="${esc(g.group_id)}">${g.name ? esc(g.name) : esc(g.group_id)}</option>`).join('')}
+        </select>
+        <input type="text" name="lat" class="search-input" placeholder="Latitude" required inputmode="decimal">
+        <input type="text" name="lng" class="search-input" placeholder="Longitude" required inputmode="decimal">
+        <input type="text" name="radius_m" class="search-input" placeholder="Radius (meter)" value="200" required inputmode="numeric">
+        <button type="submit" class="btn btn-primary">${icon.zone} Tambah Zona</button>
+      </form>
+    </div>
+  </section>
+
   <section id="devices" class="panel">
     <div class="panel-head">
       <span class="icon-badge">${icon.devices}</span>
@@ -501,9 +596,9 @@ const page = (groups, devices, audio, pickup, base) => {
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Nama</th><th>Device ID / Grup</th><th>Tipe</th><th>Audio</th><th>Terakhir aktif</th><th>Aksi</th></tr></thead>
+        <thead><tr><th>Nama</th><th>Device ID / Grup</th><th>Tipe</th><th>Audio</th><th>Baterai</th><th>Terakhir aktif</th><th>Aksi</th></tr></thead>
         <tbody id="devices-tbody">
-        ${devices.length === 0 ? emptyRow(6, 'Belum ada perangkat terdaftar.') : devices.map((d) => {
+        ${devices.length === 0 ? emptyRow(7, 'Belum ada perangkat terdaftar.') : devices.map((d) => {
           const name = d.label || d.device_id;
           const searchKey = esc(`${d.label || ''} ${d.device_id} ${d.group_name || ''}`.toLowerCase());
           const blocked = !!d.blocked_at;
@@ -512,6 +607,7 @@ const page = (groups, devices, audio, pickup, base) => {
           <td><span class="mono">${esc(d.device_id)}</span><div class="sub">${d.group_name ? esc(d.group_name) : esc(d.group_id || 'default')}</div></td>
           <td class="type-cell">${blocked ? '<span class="badge badge-no">Diblokir</span>' : typeBadge(d.type)}</td>
           <td class="consent-cell">${consentBadge(d.allow_audio)}</td>
+          <td>${batteryBadge(d.battery_percent)}</td>
           <td>${fmtTime(d.last_seen)}<div class="sub">${timeAgo(d.last_seen)}</div></td>
           <td>
             <div class="actions">
@@ -532,7 +628,7 @@ const page = (groups, devices, audio, pickup, base) => {
         }).join('')}
         </tbody>
         <tbody id="devices-no-results" style="display:none">
-          <tr><td colspan="6" class="empty-state">Tidak ada perangkat yang cocok dengan pencarian.</td></tr>
+          <tr><td colspan="7" class="empty-state">Tidak ada perangkat yang cocok dengan pencarian.</td></tr>
         </tbody>
       </table>
     </div>
@@ -575,7 +671,9 @@ const page = (groups, devices, audio, pickup, base) => {
             ? `<span class="badge badge-no">SOS: ${esc(p.target_label)}</span>`
             : p.kind === 'sos_self'
               ? '<span class="badge badge-no">🆘 SOS</span>'
-              : '<span class="badge badge-muted">Jemput</span>'}</td>
+              : p.kind === 'checkin'
+                ? '<span class="badge badge-yes">✅ Check-in</span>'
+                : '<span class="badge badge-muted">Jemput</span>'}</td>
           <td class="cell-primary">${esc(p.requester_label)}</td>
           <td>${p.note ? esc(p.note) : '<span class="muted">-</span>'}</td>
           <td>${statusBadge(p.status)}${p.error ? `<div class="sub">${esc(p.error)}</div>` : ''}</td>
@@ -648,7 +746,7 @@ const page = (groups, devices, audio, pickup, base) => {
     var tbody = document.getElementById('devices-tbody');
     if (deviceRows().length === 0 && !tbody.querySelector('.empty-state')) {
       var tr = document.createElement('tr');
-      tr.innerHTML = '<td colspan="6" class="empty-state">Belum ada perangkat terdaftar.</td>';
+      tr.innerHTML = '<td colspan="7" class="empty-state">Belum ada perangkat terdaftar.</td>';
       tbody.appendChild(tr);
       document.getElementById('devices-no-results').style.display = 'none';
     }
@@ -688,6 +786,36 @@ const page = (groups, devices, audio, pickup, base) => {
           toast('"' + name + '" dihapus & diblokir.', 'success');
         }).catch(function () {
           toast('Gagal menghapus perangkat. Coba lagi.', 'error');
+        });
+      });
+    });
+  });
+
+  // --- Delete geofence ---
+  document.querySelectorAll('form.js-zone-delete').forEach(function (form) {
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var row = form.closest('tr');
+      var name = row.getAttribute('data-name') || 'zona ini';
+      confirmModal('Hapus zona "' + name + '"? Tindakan ini tidak bisa dibatalkan.', 'Hapus').then(function (ok) {
+        if (!ok) return;
+        submitForm(form).then(function (res) {
+          if (!res.ok) throw new Error('request failed');
+          row.classList.add('row-removing');
+          setTimeout(function () {
+            row.remove();
+            var tbody = document.getElementById('zones-tbody');
+            var remaining = tbody.querySelectorAll('tr[data-zone-row]').length;
+            document.getElementById('zones-count').textContent = remaining + ' zona';
+            if (remaining === 0 && !tbody.querySelector('.empty-state')) {
+              var tr = document.createElement('tr');
+              tr.innerHTML = '<td colspan="5" class="empty-state">Belum ada zona aman.</td>';
+              tbody.appendChild(tr);
+            }
+          }, 200);
+          toast('Zona "' + name + '" dihapus.', 'success');
+        }).catch(function () {
+          toast('Gagal menghapus zona. Coba lagi.', 'error');
         });
       });
     });
@@ -866,6 +994,13 @@ const page = (groups, devices, audio, pickup, base) => {
       gInfoWindow = new google.maps.InfoWindow();
       loadPositions();
       setInterval(loadPositions, 20000);
+
+      if (trackMapCanvas) {
+        tMap = new google.maps.Map(trackMapCanvas, {
+          center: { lat: -2.5, lng: 118 },
+          zoom: 4,
+        });
+      }
     };
 
     function clearMarkers() {
@@ -976,6 +1111,106 @@ const page = (groups, devices, audio, pickup, base) => {
     groupSelect.addEventListener('change', loadPositions);
     refreshBtn.addEventListener('click', loadPositions);
 
+    // --- Riwayat Rute (route history for one device) ---
+    var trackMapCanvas = document.getElementById('track-map-canvas');
+    var tMap = null;
+    var tPolyline = null;
+    var tMarkers = [];
+    var trackDeviceSelect = document.getElementById('track-device-select');
+    var trackHoursSelect = document.getElementById('track-hours-select');
+    var trackLoadBtn = document.getElementById('track-load-btn');
+    var trackStatusEl = document.getElementById('track-status');
+
+    function haversineKm(a, b) {
+      var R = 6371;
+      var dLat = (b.lat - a.lat) * Math.PI / 180;
+      var dLng = (b.lng - a.lng) * Math.PI / 180;
+      var s = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) *
+        Math.sin(dLng / 2) * Math.sin(dLng / 2);
+      return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+    }
+
+    function clearTrack() {
+      if (tPolyline) { tPolyline.setMap(null); tPolyline = null; }
+      tMarkers.forEach(function (m) { m.setMap(null); });
+      tMarkers = [];
+    }
+
+    function loadTrack() {
+      if (!tMap) return;
+      if (!trackDeviceSelect.value) { trackStatusEl.textContent = 'Belum ada perangkat'; return; }
+      trackStatusEl.textContent = 'Memuat…';
+      fetch('api/tracks?device=' + encodeURIComponent(trackDeviceSelect.value) +
+          '&hours=' + encodeURIComponent(trackHoursSelect.value))
+        .then(function (res) {
+          if (!res.ok) throw new Error('request failed');
+          return res.json();
+        })
+        .then(function (points) {
+          clearTrack();
+          if (points.length === 0) {
+            trackStatusEl.textContent = 'Tidak ada data posisi pada rentang ini';
+            return;
+          }
+
+          var path = points.map(function (p) { return { lat: p.lat, lng: p.lng }; });
+          tPolyline = new google.maps.Polyline({
+            path: path,
+            geodesic: true,
+            strokeColor: '#1b6cf7',
+            strokeOpacity: 1,
+            strokeWeight: 4,
+            map: tMap,
+          });
+
+          var bounds = new google.maps.LatLngBounds();
+          path.forEach(function (p) { bounds.extend(p); });
+
+          tMarkers.push(new google.maps.Marker({
+            position: path[0],
+            map: tMap,
+            label: { text: 'A', color: '#fff', fontSize: '11px', fontWeight: '700' },
+            icon: {
+              path: google.maps.SymbolPath.CIRCLE, scale: 10,
+              fillColor: '#2e9e5b', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2,
+            },
+            title: 'Mulai: ' + fmtWIB(points[0].recordedAt),
+          }));
+          tMarkers.push(new google.maps.Marker({
+            position: path[path.length - 1],
+            map: tMap,
+            label: { text: 'B', color: '#fff', fontSize: '11px', fontWeight: '700' },
+            icon: {
+              path: google.maps.SymbolPath.CIRCLE, scale: 10,
+              fillColor: '#d64545', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2,
+            },
+            title: 'Terakhir: ' + fmtWIB(points[points.length - 1].recordedAt),
+          }));
+
+          if (path.length === 1) {
+            tMap.setCenter(path[0]);
+            tMap.setZoom(15);
+          } else {
+            tMap.fitBounds(bounds, 40);
+          }
+
+          var distanceKm = 0;
+          for (var i = 1; i < path.length; i++) distanceKm += haversineKm(path[i - 1], path[i]);
+
+          trackStatusEl.textContent = points.length + ' titik · ~' + distanceKm.toFixed(1) + ' km · ' +
+            fmtWIB(points[0].recordedAt) + ' – ' + fmtWIB(points[points.length - 1].recordedAt);
+        })
+        .catch(function () {
+          trackStatusEl.textContent = 'Gagal memuat rute';
+          toast('Gagal memuat riwayat rute. Coba lagi.', 'error');
+        });
+    }
+
+    if (trackLoadBtn) {
+      trackLoadBtn.addEventListener('click', loadTrack);
+    }
+
     var gmapsScript = document.createElement('script');
     gmapsScript.src = 'https://maps.googleapis.com/maps/api/js?key=${MAPS_API_KEY}&callback=initGardeniaMap';
     gmapsScript.async = true;
@@ -993,6 +1228,7 @@ router.get('/', (req, res) => {
     listDevicesStmt.all(),
     listAudioStmt.all(),
     listPickupStmt.all(),
+    listGeofencesStmt.all(),
     req.baseUrl || '/admin',
   ));
 });
@@ -1015,6 +1251,29 @@ router.get('/api/positions', (req, res) => {
     accuracy: r.accuracy,
     speed: r.speed,
     recordedAt: r.recorded_at,
+  })));
+});
+
+const deviceTrackStmt = db.prepare(`
+  SELECT lat, lng, accuracy, speed, recorded_at
+  FROM positions
+  WHERE device_id = ? AND recorded_at >= ?
+  ORDER BY recorded_at ASC
+`);
+
+// GET /admin/api/tracks?device=<device_id>&hours=<N> -> route history for one
+// device (JSON), used by the "Riwayat Rute" panel. Admin sees every device,
+// no group/visibility filtering needed (unlike the client-facing endpoint).
+router.get('/api/tracks', (req, res) => {
+  const deviceId = (req.query.device || '').toString();
+  if (!deviceId) return res.status(400).json({ error: 'device is required' });
+  let hours = parseFloat(req.query.hours);
+  if (!Number.isFinite(hours) || hours <= 0) hours = 24;
+  if (hours > 168) hours = 168; // cap at 7 days
+  const since = Date.now() - Math.round(hours * 3600 * 1000);
+  const rows = deviceTrackStmt.all(deviceId, since);
+  res.json(rows.map((r) => ({
+    lat: r.lat, lng: r.lng, accuracy: r.accuracy, speed: r.speed, recordedAt: r.recorded_at,
   })));
 });
 
@@ -1075,6 +1334,10 @@ const delGroupAudioStmt = db.prepare('DELETE FROM audio_requests WHERE group_id 
 const delGroupPickupStmt = db.prepare('DELETE FROM pickup_requests WHERE group_id = ?');
 const delGroupPositionsStmt = db.prepare("DELETE FROM positions WHERE COALESCE(group_id, 'default') = ?");
 const delGroupDevicesStmt = db.prepare("DELETE FROM devices WHERE COALESCE(group_id, 'default') = ?");
+const delGroupGeofenceStateStmt = db.prepare(
+  'DELETE FROM geofence_state WHERE geofence_id IN (SELECT id FROM geofences WHERE group_id = ?)'
+);
+const delGroupGeofencesStmt = db.prepare('DELETE FROM geofences WHERE group_id = ?');
 const delGroupStmt = db.prepare('DELETE FROM groups WHERE group_id = ?');
 
 router.post('/group/:gid/delete', (req, res) => {
@@ -1088,6 +1351,8 @@ router.post('/group/:gid/delete', (req, res) => {
     delGroupPickupStmt.run(id);
     delGroupPositionsStmt.run(id);
     delGroupDevicesStmt.run(id);
+    delGroupGeofenceStateStmt.run(id);
+    delGroupGeofencesStmt.run(id);
     delGroupStmt.run(id);
   });
   tx(gid);
@@ -1098,6 +1363,38 @@ router.post('/group/:gid/delete', (req, res) => {
       // best-effort cleanup; the DB rows are already gone either way
     }
   }
+  res.redirect(home(req));
+});
+
+const insertGeofenceStmt = db.prepare(`
+  INSERT INTO geofences (group_id, name, lat, lng, radius_m, created_at)
+  VALUES (@group_id, @name, @lat, @lng, @radius_m, @created_at)
+`);
+router.post('/geofence/add', (req, res) => {
+  const name = (req.body.name || '').trim();
+  const groupId = (req.body.group_id || '').trim();
+  const lat = Number(req.body.lat);
+  const lng = Number(req.body.lng);
+  const radiusM = Number(req.body.radius_m);
+  if (!name || !groupId || !Number.isFinite(lat) || !Number.isFinite(lng) ||
+      !Number.isFinite(radiusM) || radiusM <= 0) {
+    return res.status(400).send('Data zona tidak valid.');
+  }
+  insertGeofenceStmt.run({
+    group_id: groupId, name, lat, lng, radius_m: radiusM, created_at: Date.now(),
+  });
+  res.redirect(home(req));
+});
+
+const delGeofenceStateStmt = db.prepare('DELETE FROM geofence_state WHERE geofence_id = ?');
+const delGeofenceStmt = db.prepare('DELETE FROM geofences WHERE id = ?');
+router.post('/geofence/:id/delete', (req, res) => {
+  const id = Number(req.params.id);
+  const tx = db.transaction((gid) => {
+    delGeofenceStateStmt.run(gid);
+    delGeofenceStmt.run(gid);
+  });
+  tx(id);
   res.redirect(home(req));
 });
 
