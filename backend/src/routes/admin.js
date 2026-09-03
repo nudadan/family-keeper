@@ -103,7 +103,7 @@ const listAudioStmt = db.prepare(`
 `);
 
 const listPickupStmt = db.prepare(`
-  SELECT id, requester_label, target_label, note, status, error, created_at
+  SELECT id, requester_label, target_label, note, status, error, created_at, kind
   FROM pickup_requests
   ORDER BY created_at DESC
   LIMIT 100
@@ -566,7 +566,9 @@ const page = (groups, devices, audio, pickup, base) => {
           <td>${fmtTime(p.created_at)}</td>
           <td>${p.target_label
             ? `<span class="badge badge-no">SOS: ${esc(p.target_label)}</span>`
-            : '<span class="badge badge-muted">Jemput</span>'}</td>
+            : p.kind === 'sos_self'
+              ? '<span class="badge badge-no">🆘 SOS</span>'
+              : '<span class="badge badge-muted">Jemput</span>'}</td>
           <td class="cell-primary">${esc(p.requester_label)}</td>
           <td>${p.note ? esc(p.note) : '<span class="muted">-</span>'}</td>
           <td>${statusBadge(p.status)}${p.error ? `<div class="sub">${esc(p.error)}</div>` : ''}</td>

@@ -27,6 +27,7 @@ import com.noesolution.gtracker.audio.AudioClipService
 import com.noesolution.gtracker.data.ApiClient
 import com.noesolution.gtracker.data.PositionUpload
 import com.noesolution.gtracker.data.SettingsRepository
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -41,6 +42,7 @@ class LocationTrackerService : LifecycleService() {
     private lateinit var settingsRepo: SettingsRepository
     private var audioPollingStarted = false
     private var wakeLock: PowerManager.WakeLock? = null
+    private var boostJob: Job? = null
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -68,6 +70,7 @@ class LocationTrackerService : LifecycleService() {
                 stopTracking()
                 return START_NOT_STICKY
             }
+            ACTION_BOOST -> boostTracking()
             else -> startTracking()
         }
         return START_STICKY
@@ -80,26 +83,50 @@ class LocationTrackerService : LifecycleService() {
         lifecycleScope.launch {
             val settings = settingsRepo.current()
             val intervalMs = settings.intervalMinutes.coerceAtLeast(1) * 60_000L
-
-            val request = LocationRequest.Builder(
-                Priority.PRIORITY_HIGH_ACCURACY,
-                intervalMs,
-            )
-                .setMinUpdateIntervalMillis(intervalMs / 2)
-                // Wait briefly for a precise GPS fix instead of returning a
-                // quick, coarse network/wifi location.
-                .setWaitForAccurateLocation(true)
-                .build()
-
-            try {
-                fusedClient.requestLocationUpdates(request, locationCallback, mainLooper)
-            } catch (e: SecurityException) {
-                // Location permission was revoked; stop gracefully.
-                stopTracking()
-            }
+            applyLocationRequest(intervalMs)
         }
 
         startAudioPolling()
+    }
+
+    private fun applyLocationRequest(intervalMs: Long) {
+        val request = LocationRequest.Builder(
+            Priority.PRIORITY_HIGH_ACCURACY,
+            intervalMs,
+        )
+            .setMinUpdateIntervalMillis(intervalMs / 2)
+            // Wait briefly for a precise GPS fix instead of returning a
+            // quick, coarse network/wifi location.
+            .setWaitForAccurateLocation(true)
+            .build()
+
+        try {
+            fusedClient.requestLocationUpdates(request, locationCallback, mainLooper)
+        } catch (e: SecurityException) {
+            // Location permission was revoked; stop gracefully.
+            stopTracking()
+        }
+    }
+
+    /**
+     * Emergency SOS: send fixes much more often for a limited window so family
+     * can follow along in near-real time, then fall back to the configured
+     * interval automatically. Safe to call whether or not tracking is already
+     * running.
+     */
+    private fun boostTracking() {
+        startForegroundWithNotification()
+        acquireWakeLock()
+        startAudioPolling()
+        applyLocationRequest(BOOST_INTERVAL_MS)
+
+        boostJob?.cancel()
+        boostJob = lifecycleScope.launch {
+            delay(BOOST_DURATION_MS)
+            val settings = settingsRepo.current()
+            val intervalMs = settings.intervalMinutes.coerceAtLeast(1) * 60_000L
+            applyLocationRequest(intervalMs)
+        }
     }
 
     /**
@@ -162,6 +189,8 @@ class LocationTrackerService : LifecycleService() {
     }
 
     private fun stopTracking() {
+        boostJob?.cancel()
+        boostJob = null
         fusedClient.removeLocationUpdates(locationCallback)
         releaseWakeLock()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -265,8 +294,11 @@ class LocationTrackerService : LifecycleService() {
     companion object {
         private const val NOTIFICATION_ID = 1001
         private const val AUDIO_POLL_INTERVAL_MS = 15_000L
+        private const val BOOST_INTERVAL_MS = 30_000L
+        private const val BOOST_DURATION_MS = 15 * 60_000L
         const val ACTION_START = "com.noesolution.gtracker.START"
         const val ACTION_STOP = "com.noesolution.gtracker.STOP"
+        const val ACTION_BOOST = "com.noesolution.gtracker.BOOST"
 
         fun start(context: Context) {
             val intent = Intent(context, LocationTrackerService::class.java).apply {
@@ -284,6 +316,18 @@ class LocationTrackerService : LifecycleService() {
                 action = ACTION_STOP
             }
             context.startService(intent)
+        }
+
+        /** Starts tracking (if not already) and sends fixes every 30s for 15 minutes. */
+        fun boost(context: Context) {
+            val intent = Intent(context, LocationTrackerService::class.java).apply {
+                action = ACTION_BOOST
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
         }
     }
 }

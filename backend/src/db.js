@@ -110,6 +110,13 @@ if (!pickupCols.includes('target_device_id')) {
 if (!pickupCols.includes('target_label')) {
   db.exec('ALTER TABLE pickup_requests ADD COLUMN target_label TEXT');
 }
+if (!pickupCols.includes('kind')) {
+  // 'pickup' (self, "jemput saya"), 'sos_target' (alert about another device
+  // that didn't respond to an audio request), or 'sos_self' (self-initiated
+  // emergency button).
+  db.exec("ALTER TABLE pickup_requests ADD COLUMN kind TEXT NOT NULL DEFAULT 'pickup'");
+  db.exec("UPDATE pickup_requests SET kind = 'sos_target' WHERE target_device_id IS NOT NULL");
+}
 
 // Emergency audio requests (on-demand clips).
 db.exec(`

@@ -185,6 +185,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Self-initiated emergency SOS: sends an urgent WhatsApp alert with the
+     * device's current location to the group, and boosts this device's own
+     * location-send frequency for the next 15 minutes so family can follow
+     * along in near-real time — independent of whether the WhatsApp send
+     * itself succeeds.
+     */
+    fun sendSos(onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            val s = repo.current()
+            if (s.groupCode.isBlank()) {
+                onResult("⚠️ Isi Group code di Settings dulu.")
+                return@launch
+            }
+            LocationTrackerService.boost(getApplication())
+            try {
+                val deviceId = repo.ensureDeviceId()
+                ApiClient.create(s.backendUrl, s.apiKey, s.groupCode, deviceId)
+                    .requestPickup(PickupRequestBody(note = null, kind = "sos"))
+                onResult("✅ SOS terkirim ke grup WhatsApp. Lokasi dikirim lebih sering selama 15 menit.")
+            } catch (e: Exception) {
+                onResult("❌ ${friendlyError(e)}")
+            }
+        }
+    }
+
     /** Extracts the backend's {"error": "..."} message from an HTTP error response, if present. */
     private suspend fun friendlyError(e: Exception): String {
         if (e is HttpException) {

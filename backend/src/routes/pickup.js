@@ -38,12 +38,12 @@ const lastRequestStmt = db.prepare(
 const insertRequestStmt = db.prepare(`
   INSERT INTO pickup_requests
     (group_id, requester_device_id, requester_label, target_device_id, target_label,
-     note, lat, lng, status, error, created_at)
+     note, lat, lng, status, error, created_at, kind)
   VALUES (@group_id, @requester_device_id, @requester_label, @target_device_id, @target_label,
-     @note, @lat, @lng, @status, @error, @created_at)
+     @note, @lat, @lng, @status, @error, @created_at, @kind)
 `);
 const logStmt = db.prepare(`
-  SELECT id, requester_label, target_label, note, status, error, created_at
+  SELECT id, requester_label, target_label, note, status, error, created_at, kind
   FROM pickup_requests
   WHERE group_id = ?
   ORDER BY created_at DESC
@@ -74,9 +74,10 @@ function wibTime(ms) {
   }).format(new Date(ms));
 }
 
-// POST /api/pickup/request  { note?: string, targetDeviceId?: string }
+// POST /api/pickup/request  { note?: string, targetDeviceId?: string, kind?: string }
 //
-// Without targetDeviceId: a self pickup request ("I need a ride").
+// Without targetDeviceId: a self pickup request ("I need a ride"), or — when
+// kind === 'sos' — a self-initiated emergency alert ("I need help").
 // With targetDeviceId: an SOS-style alert about ANOTHER device — used when an
 // emergency-audio request to that device times out, so the family still gets
 // an actionable notification + last-known location even if audio fails.
@@ -92,6 +93,7 @@ router.post('/request', async (req, res) => {
 
   const note = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, 300) : '';
   const targetId = typeof req.body?.targetDeviceId === 'string' ? req.body.targetDeviceId.trim() : '';
+  const isSelfSos = !targetId && req.body?.kind === 'sos';
 
   const g = groupIdFromReq(req);
   const group = getGroupStmt.get(g);
@@ -136,6 +138,13 @@ router.post('/request', async (req, res) => {
     text += position
       ? '\n\nLokasi terakhir di bawah ini 👇'
       : '\n\n(Lokasi terakhir belum tersedia)';
+  } else if (isSelfSos) {
+    text = `🆘 *DARURAT — Butuh Bantuan*\n\n*${requesterLabel}* menekan tombol SOS dan butuh bantuan segera!` +
+      `\n🕒 ${timeStr} WIB`;
+    if (note) text += `\n📝 ${note}`;
+    text += position
+      ? '\n\nLokasi terkini di bawah ini 👇'
+      : '\n\n(Lokasi belum tersedia)';
   } else {
     text = `🚗 *Permintaan Jemput*\n\n*${requesterLabel}* minta dijemput.\n🕒 ${timeStr} WIB`;
     if (note) text += `\n📝 ${note}`;
@@ -177,6 +186,7 @@ router.post('/request', async (req, res) => {
     status,
     error,
     created_at: now,
+    kind: targetId ? 'sos_target' : isSelfSos ? 'sos_self' : 'pickup',
   });
 
   if (status === 'failed') {

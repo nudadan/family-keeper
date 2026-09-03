@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sos
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -27,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -66,6 +68,9 @@ fun EmergencyAudioScreen(
     // requestId/target -> status text
     var statuses by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var alertStatuses by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var showSosConfirm by remember { mutableStateOf(false) }
+    var sosSending by remember { mutableStateOf(false) }
+    var sosStatus by remember { mutableStateOf<String?>(null) }
 
     fun refreshDevices() {
         listStatus = "Memuat…"
@@ -95,6 +100,44 @@ fun EmergencyAudioScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            SectionCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Filled.Sos,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(28.dp),
+                    )
+                    Spacer(Modifier.size(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Tombol SOS", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Tekan jika Anda sendiri butuh bantuan darurat.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Button(
+                    onClick = { showSosConfirm = true },
+                    enabled = !sosSending,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Filled.Sos, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.size(8.dp))
+                    Text(if (sosSending) "Mengirim SOS…" else "SAYA BUTUH BANTUAN")
+                }
+                if (!sosStatus.isNullOrBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(sosStatus.orEmpty(), style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
             SectionCard {
                 Row(verticalAlignment = Alignment.Top) {
                     Icon(
@@ -225,5 +268,35 @@ fun EmergencyAudioScreen(
 
             Spacer(Modifier.height(8.dp))
         }
+    }
+
+    if (showSosConfirm) {
+        AlertDialog(
+            onDismissRequest = { showSosConfirm = false },
+            title = { Text("Kirim SOS?") },
+            text = {
+                Text(
+                    "Pesan darurat + lokasi Anda akan dikirim ke grup WhatsApp, dan " +
+                        "lokasi akan dikirim lebih sering selama 15 menit supaya keluarga " +
+                        "bisa memantau posisi Anda.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showSosConfirm = false
+                    sosSending = true
+                    sosStatus = null
+                    vm.sendSos { st ->
+                        sosSending = false
+                        sosStatus = st
+                    }
+                }) {
+                    Text("Kirim SOS", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSosConfirm = false }) { Text("Batal") }
+            },
+        )
     }
 }

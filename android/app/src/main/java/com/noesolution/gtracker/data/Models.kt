@@ -28,7 +28,12 @@ data class AudioRequestBody(val targetDeviceId: String)
 data class AudioRequestResponse(val requestId: String)
 
 /** Body for POST /api/pickup/request */
-data class PickupRequestBody(val note: String?, val targetDeviceId: String? = null)
+data class PickupRequestBody(
+    val note: String?,
+    val targetDeviceId: String? = null,
+    /** "sos" for a self-initiated emergency alert; omitted for a normal pickup request. */
+    val kind: String? = null,
+)
 
 /** One row of the emergency-audio transparency log. */
 data class AudioLogEntry(
