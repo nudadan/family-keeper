@@ -34,6 +34,7 @@ class BootReceiver : BroadcastReceiver() {
                 val settings = SettingsRepository(appContext).current()
                 if (settings.trackingEnabled) {
                     LocationTrackerService.start(appContext)
+                    TrackingWatchdog.schedule(appContext)
                 }
             } catch (_: Exception) {
                 // Ignore; nothing else we can do this early in boot.

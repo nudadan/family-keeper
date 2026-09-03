@@ -20,6 +20,7 @@ import com.noesolution.gtracker.data.PositionUpload
 import com.noesolution.gtracker.data.Settings
 import com.noesolution.gtracker.data.SettingsRepository
 import com.noesolution.gtracker.tracker.LocationTrackerService
+import com.noesolution.gtracker.tracker.TrackingWatchdog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
@@ -75,6 +76,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             ) == PackageManager.PERMISSION_GRANTED
             if (granted) {
                 LocationTrackerService.start(app)
+                // Re-arm the watchdog too: a fresh install/update wipes
+                // WorkManager's own schedule, so this is what re-enables it
+                // without the user having to toggle tracking off and on.
+                TrackingWatchdog.schedule(app)
             }
         }
     }
@@ -82,14 +87,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun startTracking() {
         viewModelScope.launch {
             repo.update(trackingEnabled = true)
-            LocationTrackerService.start(getApplication())
+            val app = getApplication<Application>()
+            LocationTrackerService.start(app)
+            TrackingWatchdog.schedule(app)
         }
     }
 
     fun stopTracking() {
         viewModelScope.launch {
             repo.update(trackingEnabled = false)
-            LocationTrackerService.stop(getApplication())
+            val app = getApplication<Application>()
+            LocationTrackerService.stop(app)
+            TrackingWatchdog.cancel(app)
         }
     }
 
